@@ -1124,7 +1124,159 @@ class TaskCountAPIView(APIView):
             "overdue_task_count":overdue_task_count
            
         })   
-        
+
+
+# add extra tasks to existing project
+class AddTasksToProjectApi(APIView):
+    permission_classes = [IsAuthenticated]
+    parser_classes = (MultiPartParser, FormParser, JSONParser)
+
+    def post(self, request, *args, **kwargs):
+        data = request.data.copy()
+
+        project_id = data.get("project_id")
+        if not project_id:
+            return Response(
+                {"project_id": ["This field is required."]},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        project = get_object_or_404(Project, id=project_id)
+
+        # ✅ Handle tasks input (can be list or single object)
+        tasks_data = data.get("tasks")
+
+        if not tasks_data:
+            return Response(
+                {"tasks": ["This field is required."]},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # ✅ If tasks_data is a JSON string, parse it
+        if isinstance(tasks_data, str):
+            try:
+                tasks_data = json.loads(tasks_data)
+            except json.JSONDecodeError:
+                return Response(
+                    {"tasks": ["Invalid JSON format."]},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+        if isinstance(tasks_data, dict):
+            tasks_data = [tasks_data]
+        elif not isinstance(tasks_data, list):
+            return Response(
+                {"tasks": ["This field must be a list or a single object."]},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        created_tasks = []
+        for task_data in tasks_data:
+            task_data["project"] = project.id  
+
+            serializer = TaskSerializer(data=task_data)
+            if serializer.is_valid():
+                task = serializer.save(project=project,assigned_by=request.user)
+                created_tasks.append(task)
+
+                # ✅ Notify assigned user
+                assigned_to_id = task_data.get("assigned_to")
+                if assigned_to_id:
+                    try:
+                        assigned_to_user = User.objects.get(id=assigned_to_id)
+                        NotificationLog.objects.create(
+                            user=assigned_to_user,
+                            title="New Task Assigned",
+                            action=f"A new task '{task.title}' has been assigned to you in project '{project.project_name}'."
+                        )
+                    except User.DoesNotExist:
+                        pass
+            else:
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        created_serializer = TaskSerializer(created_tasks, many=True)
+        return Response(
+            {
+                "success": True,
+                "message": f"{len(created_tasks)} task(s) added to project '{project.project_name}' successfully.",
+                "tasks": created_serializer.data,
+            },
+            status=status.HTTP_201_CREATED
+        )
+
+
+# edit tasks api 
+
+class EditTaskApi(APIView):
+    permission_classes = [IsAuthenticated]
+    parser_classes = (MultiPartParser, FormParser, JSONParser)
+
+    def patch(self, request, task_id, *args, **kwargs):
+        task = get_object_or_404(Task, id=task_id)
+
+        serializer = TaskSerializer(task, data=request.data, partial=True)
+        if serializer.is_valid():
+            updated_task = serializer.save()
+
+            # Optional: Notify assigned user if assigned_to changed
+            if "assigned_to" in request.data:
+                try:
+                    assigned_user = updated_task.assigned_to
+                    NotificationLog.objects.create(
+                        user=assigned_user,
+                        title="Task Updated",
+                        action=f"The task '{updated_task.title}' has been updated."
+                    )
+                except:
+                    pass
+
+            return Response(
+                {
+                    "success": True,
+                    "message": f"Task '{updated_task.title}' updated successfully.",
+                 "task": serializer.data},
+                status=status.HTTP_200_OK
+            )
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+# delete each tasks from the project
+class DeleteTaskApi(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, task_id, *args, **kwargs):
+        task = get_object_or_404(Task, id=task_id)
+        task_title = task.title
+        task.delete()
+
+        return Response(
+            
+            {"success": True,
+                "message": f"Task '{task_title}' has been deleted successfully."},
+            status=status.HTTP_200_OK
+        )
+
+
+
+
+ # notification log edit api
+class NotificationLogEditAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, pk):
+        log = get_object_or_404(NotificationLog, pk=pk)
+        serializer = NotificationSerializer(log, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response({
+                "success": True,
+                "message": "Notification log updated successfully",
+                "data": serializer.data
+            })
+        return Response({
+            "success": False,
+            "errors": serializer.errors
+        }, status=status.HTTP_400_BAD_REQUEST)       
         
 #07/10/2025  
 #
@@ -1199,11 +1351,83 @@ class Last7DaysTasksAPIView(APIView):
             "success": True,
             "message": "Tasks from the last 7 days retrieved successfully",
             "data": serializer.data
-        })        
-              
+        })    
         
         
         
+class TaskStatusFilterAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get_tasks_by_status(self, status_filter):
+        """
+        Helper function to get tasks filtered by status.
+        """
+        if status_filter:
+            return Task.objects.filter(status__iexact=status_filter).order_by("-created_at")
+        return Task.objects.none()  # return empty queryset if no filter provided
+
+    def get(self, request, status_filter):
+        """
+        Fetch tasks filtered by status from URL.
+        Example: /api/taskliststatusfilter/status=Pending/
+        """
+        # Clean URL parameter like "status=Pending"
+        if status_filter.startswith("status="):
+            status_value = status_filter.split("=", 1)[1]
+        else:
+            status_value = status_filter
+
+        tasks = self.get_tasks_by_status(status_value)
+        serializer = TaskWithMembersSerializer(tasks, many=True)
+
+        return Response({
+            "success": True,
+            "message": f"Tasks with status '{status_value}' retrieved successfully",
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)     
+        
+        
+        
+        
+        
+class ProjectDetailnewwAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, project_id):
+        project = get_object_or_404(Project, id=project_id)
+        serializer = ProjectDetailSerializerneww(project)
+        return Response({
+            "success": True,
+            "message": "Project details retrieved successfully",
+            "data": serializer.data
+        })                 
+        
+        
+        
+# get count of total pending project approvals and also total pending leave approvals
+class DashboardPendingApprovalsCountView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+
+        if user.role not in ['admin', 'superadmin']:
+            return Response(
+                {"success": False, "message": "You are not authorized to view this data."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        pending_projects_count = Project.objects.filter(status="Pending").count()
+        pending_leaves_count = Leave.objects.filter(status="Pending").count()
+
+        return Response({
+            "success": True,
+            "message": "Pending approvals count fetched successfully.",
+            "data": {
+                "pending_projects": pending_projects_count,
+                "pending_leaves": pending_leaves_count
+            }
+        }, status=status.HTTP_200_OK)        
         
                   
         

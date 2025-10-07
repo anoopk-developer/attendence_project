@@ -602,7 +602,11 @@ class NotificationSerializer(serializers.ModelSerializer):
             "timestamp",
         ]                
                      
-                     
+class TaskSerializer(serializers.ModelSerializer):
+    id = serializers.IntegerField(required=False)
+    class Meta:
+        model = Task
+        fields = ["id","title", "due_date","description", "assigned_by", "assigned_to", "status"]                     
                      
                      
                      

@@ -484,6 +484,7 @@ class Task(models.Model):
     assigned_to = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="tasks_received")
     status = models.CharField(max_length=50, default="Pending")  # Pending / In Progress / Completed
     created_at = models.DateTimeField(auto_now_add=True)
+    due_date = models.DateTimeField(null=True)
     updated_at = models.DateTimeField(auto_now=True)
 
 # ---------------------------

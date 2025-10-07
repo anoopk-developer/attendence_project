@@ -478,6 +478,49 @@ class TaskWithMembersSerializer(serializers.ModelSerializer):
         if obj.updated_at:
             return obj.updated_at.astimezone().strftime("%Y-%m-%d %H:%M:%S")
         return None 
+    
+    
+    
+    
+class TaskSerializerneww(serializers.ModelSerializer):
+    assigned_by_name = serializers.CharField(source="assigned_by.username", read_only=True)
+    assigned_to_name = serializers.CharField(source="assigned_to.username", read_only=True)
+
+    class Meta:
+        model = Task
+        fields = [
+            "id", "title", "description", "status",
+            "assigned_by_name", "assigned_to_name",
+            "created_at", "due_date", "updated_at"
+        ]
+
+
+class ProjectMembersSerializerneww(serializers.ModelSerializer):
+    class Meta:
+        model = ProjectMembers
+        fields = ["id", "team_leader", "project_manager", "tags"]
+
+
+class ProjectDetailSerializerneww(serializers.ModelSerializer):
+    project_members = serializers.SerializerMethodField()
+    tasks = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Project
+        fields = [
+            "id", "project_logo", "project_name", "client", "start_date", "end_date",
+            "priority", "project_value", "total_working_hours", "extra_time",
+            "status", "description", "attachment", "reason_for_rejection",
+            "project_members", "tasks"
+        ]
+
+    def get_project_members(self, obj):
+        members = ProjectMembers.objects.filter(project=obj)
+        return ProjectMembersSerializerneww(members, many=True).data
+
+    def get_tasks(self, obj):
+        tasks = Task.objects.filter(project=obj)
+        return TaskSerializerneww(tasks, many=True).data    
          
            
         

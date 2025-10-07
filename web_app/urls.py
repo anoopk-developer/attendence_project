@@ -41,11 +41,18 @@ path('active-employees-list/',ActiveEmployeeListAPIView.as_view(),name='active-e
 path('notificationsuser/<int:user_id>/', NotificationLogByUserAPIView.as_view(), name='user-notifications'),
 path('projectscount/', ProjectCountAPIView.as_view(), name='project-count'),
 path('taskcount/', TaskCountAPIView.as_view(), name='task-count'),
+path('add-tasks-to-project/',AddTasksToProjectApi.as_view(),name='add-tasks-to-project'),
+path('update-task/<int:task_id>/',EditTaskApi.as_view(),name='update-task'),
+path('delete-task/<int:task_id>/',DeleteTaskApi.as_view(),name='delete-task'),
 
 path("attendanceedit/<int:pk>/", AttendanceEditView.as_view(), name="attendance-update"),
 path("projectsdelete/<int:project_id>/", DeleteProjectApi.as_view(), name="delete-project"),
 path('list-all-tasks/',TaskListAPIView.as_view(),name='list-all-tasks'),
 path('taskslast-7-days/', Last7DaysTasksAPIView.as_view(), name='tasks-last-7-days'),
+path("taskliststatusfilter/<str:status_filter>/", TaskStatusFilterAPIView.as_view(), name="task-status-filter"),
+path('project-detailsneww/<int:project_id>/', ProjectDetailnewwAPIView.as_view(), name='project-detailneww'),
+path('update-notificationlog/<int:pk>/', NotificationLogEditAPIView.as_view(), name='update-notificationlog'),
+path('pending-approval-count/',DashboardPendingApprovalsCountView.as_view(),name='pending-approval-count'),
 
 
 
