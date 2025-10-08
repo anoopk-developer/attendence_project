@@ -991,60 +991,6 @@ class ActiveEmployeeListAPIView(APIView):
         
         
  #pending       
-class EmployeeActivityListAPIView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request):
-        today = now().date()
-
-        # Subquery: get latest leave record for each employee applied today
-        latest_leave_today = Leave.objects.filter(
-            employee=OuterRef('pk'),
-            created_at__date=today
-        ).order_by('-created_at')
-
-        # Filter employees added today
-        new_employees_today = EmployeeDetail.objects.filter(created_at__date=today)
-
-        # Annotate employees with today's leave status (if any)
-        employees_with_leave = EmployeeDetail.objects.annotate(
-            leave_request=Subquery(latest_leave_today.values('status')[:1]),
-            latest_leave_applied_on=Subquery(latest_leave_today.values('created_at')[:1])
-        ).filter(
-            leave_request__isnull=False
-        )
-
-        # Combine today's new employees and today's leave applications
-        all_employees = list(employees_with_leave) + list(new_employees_today)
-
-        # Prepare response
-        employee_activities = []
-        for emp in all_employees:
-            if hasattr(emp, 'leave_request') and emp.leave_request:
-                activity_type = "Leave Applied"
-                activity_time = emp.latest_leave_applied_on
-            else:
-                activity_type = "New Employee Added"
-                activity_time = emp.created_at
-
-            employee_activities.append({
-                "id": emp.id,
-                "employee_id": emp.employee_id,
-                "first_name": emp.first_name,
-                "last_name": emp.last_name,
-                "designation": emp.designation,
-                "activity_type": activity_type,
-                "activity_time": activity_time
-            })
-
-        # Sort by activity_time descending
-        employee_activities.sort(key=lambda x: x['activity_time'], reverse=True)
-
-        return Response({
-            "success": True,
-            "count": len(employee_activities),
-            "employees": employee_activities
-        })
         
         
 from rest_framework import generics        
@@ -1429,7 +1375,215 @@ class DashboardPendingApprovalsCountView(APIView):
             }
         }, status=status.HTTP_200_OK)        
         
+
+
+#08/10/2025
+#admin can view task percentage values hold overdue
+
                   
+class TaskPercentageAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        total_task = Task.objects.count()
+
+        # Avoid division by zero
+        if total_task == 0:
+            return Response({
+                "success": True,
+                "message": "No tasks available",
+                "data": {
+                    "pending": "0%",
+                    "on_going": "0%",
+                    "completed": "0%",
+                    "on_hold": "0%",
+                    "overdue": "0%",
+                }
+            })
+
+        # Count each status
+        pending_count = Task.objects.filter(status__iexact="Pending").count()
+        on_going_count = Task.objects.filter(status__iexact="On Going").count()
+        completed_count = Task.objects.filter(status__iexact="Completed").count()
+        on_hold_count = Task.objects.filter(status__iexact="On Hold").count()
+        overdue_count = Task.objects.filter(status__iexact="Overdue").count()
+
+        # Helper to format percentage
+        def percent(count):
+            value = round((count / total_task) * 100, 2)
+            return f"{value}%"
+
+        return Response({
+            "success": True,
+            "total_tasks": total_task,
+            "data": {
+                "pending": percent(pending_count),
+                "on_going": percent(on_going_count),
+                "completed": percent(completed_count),
+                "on_hold": percent(on_hold_count),
+                "overdue": percent(overdue_count),
+            }
+        })
+        
+ # employee activity       
+IST = pytz.timezone("Asia/Kolkata")
+
+class EmployeeActivityListAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        today = timezone.localdate()
+
+        # --- Latest leave record for each employee applied today ---
+        latest_leave_today = Leave.objects.filter(
+            employee=OuterRef('pk'),
+            created_at__date=today
+        ).order_by('-created_at')
+
+        employees_with_leave = EmployeeDetail.objects.annotate(
+            leave_status=Subquery(latest_leave_today.values('status')[:1]),
+            latest_leave_applied_on=Subquery(latest_leave_today.values('created_at')[:1])
+        ).filter(leave_status__isnull=False)
+
+        # --- Employees added today ---
+        new_employees_today = EmployeeDetail.objects.filter(created_at__date=today)
+
+        # --- Employees removed today ---
+        removed_employees_today = EmployeeDetail.objects.filter(
+            user__is_active=False,
+            updated_at__date=today
+        )
+
+        # --- New projects added today ---
+        new_projects_today = Project.objects.filter(created_at__date=today)
+
+        # --- Projects updated today ---
+        updated_projects_today = Project.objects.filter(
+            updated_at__date=today
+        ).exclude(created_at__date=today)  # exclude those already counted as new
+
+        # --- New tasks added today ---
+        new_tasks_today = Task.objects.filter(created_at__date=today)
+
+        # --- Attendance updated today ---
+        attendance_updated_today = Attendance.objects.filter(updated_at__date=today)
+
+        employee_activities = []
+
+        # --- Employee leaves ---
+        for emp in employees_with_leave:
+            if emp.latest_leave_applied_on:
+                activity_time = timezone.localtime(emp.latest_leave_applied_on, IST)
+                employee_activities.append({
+                    "type": "Employee",
+                    "id": emp.id,
+                    "employee_id": emp.employee_id,
+                    "first_name": emp.first_name,
+                    "last_name": emp.last_name,
+                    "designation": emp.designation,
+                    "activity_type": f"Leave Applied ({emp.leave_status})",
+                    "activity_time": activity_time.strftime("%Y-%m-%d %H:%M:%S %Z")
+                })
+
+        # --- New employees ---
+        for emp in new_employees_today:
+            activity_time = timezone.localtime(emp.created_at, IST)
+            employee_activities.append({
+                "type": "Employee",
+                "id": emp.id,
+                "employee_id": emp.employee_id,
+                "first_name": emp.first_name,
+                "last_name": emp.last_name,
+                "designation": emp.designation,
+                "activity_type": "New Employee Added",
+                "activity_time": activity_time.strftime("%Y-%m-%d %H:%M:%S %Z")
+            })
+
+        # --- Removed employees ---
+        for emp in removed_employees_today:
+            activity_time = timezone.localtime(emp.updated_at, IST)
+            employee_activities.append({
+                "type": "Employee",
+                "id": emp.id,
+                "employee_id": emp.employee_id,
+                "first_name": emp.first_name,
+                "last_name": emp.last_name,
+                "designation": emp.designation,
+                "activity_type": "Employee Deleted",
+                "activity_time": activity_time.strftime("%Y-%m-%d %H:%M:%S %Z")
+            })
+
+        # --- New projects ---
+        for proj in new_projects_today:
+            activity_time = timezone.localtime(proj.created_at, IST)
+            employee_activities.append({
+                "type": "Project",
+                "id": proj.id,
+                "project_name": proj.project_name,
+                "client": proj.client,
+                "priority": proj.priority,
+                "status": proj.status,
+                "activity_type": "New Project Added",
+                "activity_time": activity_time.strftime("%Y-%m-%d %H:%M:%S %Z")
+            })
+
+        # --- Updated projects ---
+        for proj in updated_projects_today:
+            activity_time = timezone.localtime(proj.updated_at, IST)
+            employee_activities.append({
+                "type": "Project",
+                "id": proj.id,
+                "project_name": proj.project_name,
+                "client": proj.client,
+                "priority": proj.priority,
+                "status": proj.status,
+                "activity_type": "Project Updated",
+                "activity_time": activity_time.strftime("%Y-%m-%d %H:%M:%S %Z")
+            })
+
+        # --- New tasks ---
+        for task in new_tasks_today:
+            activity_time = timezone.localtime(task.created_at, IST)
+            employee_activities.append({
+                "type": "Task",
+                "id": task.id,
+                "title": task.title,
+                "description": task.description,
+                "project_name": task.project.project_name if task.project else None,
+                "assigned_by": task.assigned_by.first_name if task.assigned_by else None,
+                "assigned_to": task.assigned_to.first_name if task.assigned_to else None,
+                "status": task.status,
+                "activity_type": "New Task Created",
+                "activity_time": activity_time.strftime("%Y-%m-%d %H:%M:%S %Z")
+            })
+
+        # --- Attendance updated ---
+        for att in attendance_updated_today:
+            emp = att.employee
+            activity_time = timezone.localtime(att.updated_at, IST)
+            employee_activities.append({
+                "type": "Attendance",
+                "id": att.id,
+                "employee_id": emp.employee_id,
+                "first_name": emp.first_name,
+                "last_name": emp.last_name,
+                "activity_type": "Attendance Updated",
+                "activity_time": activity_time.strftime("%Y-%m-%d %H:%M:%S %Z")
+            })
+
+        # --- Sort by latest activity time ---
+        employee_activities.sort(key=lambda x: x['activity_time'], reverse=True)
+
+        return Response({
+            "success": True,
+            "count": len(employee_activities),
+            "activities": employee_activities
+        })
+ 
+ 
+ 
+ 
+ 
         
 # employee notifications api
                  

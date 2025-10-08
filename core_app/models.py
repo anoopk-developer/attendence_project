@@ -460,7 +460,10 @@ class Project(models.Model):
     extra_time = models.CharField(max_length=60,null=True , blank =True)
     status = models.CharField(max_length=50, default="Pending")  # Pending / In Progress / Completed
     description = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True,null=True)
+    updated_at = models.DateTimeField(auto_now_add=True,null=True)
     attachment = models.FileField(upload_to="Project_attachment/")
+    assigned_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="project_assigned")
     reason_for_rejection = models.TextField(null=True,blank=True)
 
 

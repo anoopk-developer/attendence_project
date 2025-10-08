@@ -53,6 +53,7 @@ path("taskliststatusfilter/<str:status_filter>/", TaskStatusFilterAPIView.as_vie
 path('project-detailsneww/<int:project_id>/', ProjectDetailnewwAPIView.as_view(), name='project-detailneww'),
 path('update-notificationlog/<int:pk>/', NotificationLogEditAPIView.as_view(), name='update-notificationlog'),
 path('pending-approval-count/',DashboardPendingApprovalsCountView.as_view(),name='pending-approval-count'),
+path('taskpercentage/', TaskPercentageAPIView.as_view(), name='task-percentage'),
 
 
 
