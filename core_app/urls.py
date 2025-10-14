@@ -65,6 +65,10 @@ urlpatterns = [
     path('notification-list/',NotificationStatusView.as_view(),name='notification-list'),
     path('delete-notification/<int:notification_id>/',NotificationDeleteView.as_view(),name='delete-notification'),
     path('undo-notification/<int:notification_id>/',UndoNotificationDeleteView.as_view(),name='undo-notification'),
+   path('resend-otp/', ResendOTPView.as_view(), name='resend-otp'),
+   path('list-all-leaves/',LeaveListAPIView.as_view(),name='list-all-leaves'),
+    
+    path("logout/", LogoutView.as_view(), name="logout"),
     
     
     

@@ -48,6 +48,11 @@ from django.utils import timezone
 from math import radians, sin, cos, sqrt, atan2
 from collections import defaultdict
 from . models import *
+from drf_spectacular.utils import extend_schema
+from django.core.mail import send_mail
+from django.conf import settings    
+from datetime import timedelta
+from django.utils import timezone    
 
 
 # -----------------------------
@@ -116,6 +121,11 @@ def generate_otp():
 
 class LoginView(APIView):
     permission_classes = [AllowAny]
+    
+    @extend_schema(
+        request=UserLoginSerializer,          # 👈 tells Swagger to show these fields
+        responses={200: dict}             # optional: describe successful response
+    )
 
     def post(self, request):
         email = request.data.get("email")
@@ -221,39 +231,7 @@ class ForgotPasswordView(APIView):
 # -----------------------------
 # Verify OTP
 # -----------------------------
-class VerifyOTPView(APIView):
-    permission_classes = [AllowAny]
 
-    def post(self, request):
-        email = request.data.get("email")
-        otp = request.data.get("otp")
-
-        if not email or not otp:
-            return Response({"success": False, "error": "Email and OTP are required"}, status=400)
-
-        try:
-            user = User.objects.get(email=email)
-        except User.DoesNotExist:
-            return Response({"success": False, "error": "Invalid email"}, status=404)
-
-        otp_hash = hashlib.sha256(otp.encode()).hexdigest()
-
-        otp_record = EmailOTP.objects.filter(
-            user=user,
-            otp_hash=otp_hash,
-            is_used=False,
-            purpose="reset_password",
-            expires_at__gte=timezone.now()
-        ).last()
-
-        if not otp_record:
-            return Response({"success": False, "error": "OTP invalid or expired"}, status=400)
-
-        otp_record.is_used = True
-        otp_record.is_verified = True  # ✅ mark verified
-        otp_record.save()
-
-        return Response({"success": True, "message": "OTP verified successfully"}, status=200)
 # -----------------------------
 # Reset Password
 # -----------------------------
@@ -317,12 +295,7 @@ class UserProfileView(APIView):
 # -----------------------------
 # Notification
 # -----------------------------
-class NotificationStatusView(APIView):
-    permission_classes = [IsAuthenticated]
 
-    def get(self, request):
-        unread = NotificationLog.objects.filter(user=request.user).count()
-        return Response({'unreadCount': unread})
 
 
 # -----------------------------
@@ -511,12 +484,12 @@ class EmployeeProfileView(APIView):
 # -----------------------------
 # Notification
 # -----------------------------
-class NotificationStatusView(APIView):
-    permission_classes = [IsAuthenticated]
+# class NotificationStatusView(APIView):
+#     permission_classes = [IsAuthenticated]
 
-    def get(self, request):
-        unread = NotificationLog.objects.filter(user=request.user).count()
-        return Response({'unreadCount': unread})
+#     def get(self, request):
+#         unread = NotificationLog.objects.filter(user=request.user).count()
+#         return Response({'unreadCount': unread})
 
 
 # -----------------------------
@@ -848,22 +821,27 @@ class FaceVerifyView(APIView):
         longitude = request.data.get("longitude")
 
         if not user_id or not image_file:
-            return Response({"success": False, "error": "user_id and image are required"}, status=400)
+            return Response(
+                {"success": False, "error": "user_id and image are required"},
+                status=400
+            )
 
-        employee = get_object_or_404(EmployeeDetail, user=user_id)
+        employee = get_object_or_404(EmployeeDetail, user__id=user_id)
+        user = employee.user
 
+        # Ensure employee has profile picture
         if not employee.profile_pic:
             return Response({"success": False, "error": "No profile picture found"}, status=404)
 
-        # Ensure employee has face embedding
-        if employee.face_encoding is None:
+        # Ensure employee has face embedding saved
+        if not employee.face_encoding:
             profile_embedding = generate_face_embedding(employee.profile_pic.path)
-            if profile_embedding is None:
+            if not profile_embedding:
                 return Response({"success": False, "error": "No face detected in profile picture"}, status=400)
-            employee.face_encoding = profile_embedding.tolist()
+            employee.face_encoding = profile_embedding
             employee.save()
 
-        # Save uploaded file temporarily to generate embedding
+        # Save uploaded image temporarily
         with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp_file:
             for chunk in image_file.chunks():
                 tmp_file.write(chunk)
@@ -872,75 +850,187 @@ class FaceVerifyView(APIView):
         uploaded_embedding = generate_face_embedding(uploaded_path)
         os.remove(uploaded_path)
 
-        if uploaded_embedding is None:
+        if not uploaded_embedding:
             return Response({"success": False, "error": "No face detected in uploaded image"}, status=400)
 
-        # Compare embeddings
-        match, confidence = compare_faces(employee.face_encoding, uploaded_embedding, threshold=0.5)
+        # Compare faces using cosine similarity
+        match, confidence = compare_faces(employee.face_encoding, uploaded_embedding, threshold=0.8)
 
         if not match:
             return Response({
                 "success": False,
-                "error": "Face does not match",
+                "error": "Face does not match. Verification failed.",
                 "confidence": confidence
             }, status=401)
 
-        # Mark attendance
-        user = employee.user
-   
+        # ✅ Mark Attendance
+        today = timezone.localdate()
 
+        # Check approved leave
+        approved_leave = Leave.objects.filter(
+            employee=employee,
+            start_date__lte=today,
+            end_date__gte=today,
+            status="Approved"
+        ).first()
+
+        if approved_leave:
+            approved_leave.status = "Not Taken"
+            approved_leave.save()
+
+            NotificationLog.objects.create(
+                user=user,
+                action=f"Leave on {today} marked as 'Not Taken' due to punch-in.",
+                title="Leave Updated"
+            )
+
+        # Check if already punched in
+        active_punch_in = Attendance.objects.filter(
+            employee=employee,
+            date=today,
+            out_time__isnull=True,
+            punch_in=True
+        ).first()
+
+        if active_punch_in:
+            return Response({
+                "success": False,
+                "message": "You already have an active punch-in. Please punch-out first."
+            }, status=400)
+
+        today_punch_count = Attendance.objects.filter(employee=employee, date=today).count()
+
+        # Determine punch-in status (Late / Present)
+        ist = pytz.timezone("Asia/Kolkata")
+        in_time_utc = timezone.now()
+        in_time_ist = in_time_utc.astimezone(ist)
+
+        late_threshold = time(9, 40)
+        if today_punch_count == 0 and in_time_ist.time() > late_threshold:
+            status_value = "Late"
+            NotificationLog.objects.create(
+                user=user,
+                action=f"Late punch-in recorded at {in_time_ist.strftime('%H:%M:%S')}",
+                title=status_value,
+            )
+        else:
+            status_value = "Present"
+
+        # Save Attendance Record
         Attendance.objects.create(
             employee=employee,
-            date=timezone.now().date(),
-            in_time=timezone.now(),
+            date=today,
+            in_time=in_time_utc,
             attendance_type="WFH",
-            status="Present",
+            status=status_value,
             location=f"{latitude},{longitude}",
-            selfie=image_file,
+            in_selfie=image_file,
             verified_by=user,
+            punch_in=True
         )
 
         return Response({
             "success": True,
-            "message": "Face matched and check-in recorded",
+            "message": "Face matched and check-in recorded successfully.",
             "confidence": confidence,
             "employee": EmployeeSerializer(employee).data,
             "attendance_type": "WFH",
-            "on-site": False,
+            "on_site": False,
             "user": UserLoginSerializer(user).data,
-           
-        })        
+        }, status=200)
         
 class FaceLogoutView(APIView):
     permission_classes = [AllowAny]
-
     def post(self, request):
         user_id = request.data.get("user_id")
-        if not user_id:
-            return Response({"success": False, "error": "user_id is required"}, status=400)
+        image_file = request.FILES.get("image")
+        latitude = request.data.get("latitude")
+        longitude = request.data.get("longitude")
 
-        employee = get_object_or_404(EmployeeDetail, user_id=user_id)
+        if not user_id or not image_file:
+            return Response({"success": False, "error": "user_id and image are required"}, status=400)
 
-        attendance = Attendance.objects.filter(employee=employee, date=timezone.now().date(), out_time__isnull=True).last()
+        employee = get_object_or_404(EmployeeDetail, user__id=user_id)
+
+        # ------------------------------
+        # 1️⃣ Ensure employee face encoding exists
+        # ------------------------------
+        if not employee.face_encoding:
+            if not employee.profile_pic:
+                return Response({"success": False, "error": "No profile picture found"}, status=404)
+            
+            profile_embedding = generate_face_embedding(employee.profile_pic.path)
+            if not profile_embedding:
+                return Response({"success": False, "error": "No face detected in profile picture"}, status=400)
+            
+            employee.face_encoding = profile_embedding
+            employee.save()
+
+        # ------------------------------
+        # 2️⃣ Generate embedding from uploaded logout selfie
+        # ------------------------------
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp_file:
+            for chunk in image_file.chunks():
+                tmp_file.write(chunk)
+            uploaded_path = tmp_file.name
+
+        uploaded_embedding = generate_face_embedding(uploaded_path)
+        os.remove(uploaded_path)
+
+        if not uploaded_embedding:
+            return Response({"success": False, "error": "No face detected in uploaded image"}, status=400)
+
+        # Convert stored encoding to numpy arrays
+        stored_encoding = np.array(employee.face_encoding)
+        uploaded_encoding = np.array(uploaded_embedding)
+
+        # ------------------------------
+        # 3️⃣ Compare embeddings — stricter threshold
+        # ------------------------------
+        match, confidence = compare_faces(stored_encoding, uploaded_encoding, threshold=0.8)
+
+        if not match:
+            return Response({
+                "success": False,
+                "error": "Face does not match. Logout verification failed.",
+                "confidence": confidence
+            }, status=401)
+
+        # ------------------------------
+        # 4️⃣ Find today's active attendance record
+        # ------------------------------
+        attendance = Attendance.objects.filter(
+            employee=employee,
+            date=timezone.localdate(),
+            out_time__isnull=True
+        ).last()
+
         if not attendance:
-            return Response({"success": False, "error": "No active attendance found"}, status=404)
+            return Response({"success": False, "error": "No active attendance record found."}, status=404)
 
-        attendance.outtime = timezone.now()
-        attendance.save() 
+        # ------------------------------
+        # 5️⃣ Update attendance with logout info
+        # ------------------------------
+        attendance.out_time = timezone.now()
+        attendance.out_selfie = image_file  # ✅ store logout selfie separately
+        attendance.location = f"{latitude},{longitude}" if latitude and longitude else attendance.location
+        attendance.save()
 
+        # ------------------------------
+        # 6️⃣ Return successful response
+        # ------------------------------
         return Response({
             "success": True,
-            "message": "Logout recorded successfully",
+            "message": "Face matched and logout recorded",
+            "confidence": confidence,
             "attendance": {
                 "date": attendance.date.strftime("%Y-%m-%d"),
-                "in_time": attendance.in_time.strftime("%H:%M:%S"),
-                "out_time": attendance.out_time.strftime("%H:%M:%S"),
-                "location": attendance.location,
-                "working_hours": format_timedelta(attendance.working_hours or timedelta()),
-                "overtime": format_timedelta(attendance.overtime or timedelta()),
+                "in_time": attendance.in_time.astimezone().strftime("%H:%M:%S"),
+                "out_time": attendance.out_time.astimezone().strftime("%H:%M:%S"),
+                "location": f"{latitude},{longitude}",
+                "employee": EmployeeSerializer(employee).data
             }
         })
-
 
 
 
@@ -1292,16 +1382,6 @@ class EmployeePresenceAbsenceLeaveCountView(APIView):
 
 
  # leave applying api
-class LeaveApplyingView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def post(self, request):
-        user = request.user
-        serializer = LeaveSerializer(data=request.data)
-        if serializer.is_valid():
-            serializer.save(user=user)
-            return Response({"success": True, "message": "Leave applied successfully"})
-        return Response({"success": False, "errors": serializer.errors})
 
 
 
@@ -1328,6 +1408,7 @@ class AddProjectApi(APIView):
 
  # leave applying api
 # leave applying api
+# leave applying api
 class LeaveApplyingView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -1336,39 +1417,65 @@ class LeaveApplyingView(APIView):
         serializer = LeaveSerializer(data=request.data)
 
         if serializer.is_valid():
-            # Save leave with current user context
+            start_date = serializer.validated_data.get("start_date")
+            end_date = serializer.validated_data.get("end_date")
+
+            # ✅ Check if exact same leave (same start & end date) already exists
+            exact_match = Leave.objects.filter(
+                user=user,
+                start_date=start_date,
+                end_date=end_date
+            ).first()
+
+            if exact_match:
+                return Response({
+                    "success": True,
+                    "message": "Leave already exists for the same date range. No duplicate created.",
+                    "notified_admins": 0
+                }, status=status.HTTP_200_OK)
+
+            # ✅ Remove previous leaves with the same start_date before saving the new one
+            existing_same_start_leaves = Leave.objects.filter(user=user, start_date=start_date)
+            deleted_count = existing_same_start_leaves.count()
+            existing_same_start_leaves.delete()
+
+            # ✅ Save the new (latest) leave application
             leave = serializer.save(
                 user=user,
                 employee=getattr(user, "employee_profile", None)
             )
 
-            # Determine who to notify
+            # ✅ Determine who to notify
             if getattr(user, "role", None) in ["admin", "superadmin"]:
-                # Admin applies → notify only superadmins
                 admins_qs = User.objects.filter(role="superadmin")
             else:
-                # Normal employee applies → notify all admins and superadmins
                 admins_qs = User.objects.filter(role__in=["admin", "superadmin"])
 
-            # Build action message
+            # ✅ Build notification details
             employee_id = getattr(user.employee_profile, "employee_id", None)
             title = "Leave Application"
             action_message = (
-                f"Leave request from {user.email}"
-                f" ({employee_id})" if employee_id else f"Leave request from {user.email}"
+                f"Leave request from {user.email} ({employee_id})"
+                if employee_id else f"Leave request from {user.email}"
             ) + f" for {leave.start_date} to {leave.end_date}"
 
-            # Create notifications
             for admin_user in admins_qs:
-                NotificationLog.objects.create(user=admin_user, action=action_message,title=title)
+                NotificationLog.objects.create(user=admin_user, action=action_message, title=title)
 
             return Response({
                 "success": True,
-                "message": "Leave applied successfully",
+                "message": (
+                    "Leave applied successfully. "
+                    f"Removed {deleted_count} old leave(s) with the same start date."
+                    if deleted_count else "Leave applied successfully."
+                ),
                 "notified_admins": admins_qs.count()
-            })
+            }, status=status.HTTP_201_CREATED)
 
-        return Response({"success": False, "errors": serializer.errors})       
+        return Response({
+            "success": False,
+            "errors": serializer.errors
+        }, status=status.HTTP_400_BAD_REQUEST)    
     
     
     
@@ -1976,21 +2083,21 @@ class HolidayCreateView(APIView):
         
         
         
-        
-        
-        
-class NotificationStatusView(APIView):
+# list all leave requests of all the employees
+class LeaveListAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        user = request.user
-        notifications = NotificationLog.objects.filter(user=user).order_by('-timestamp')
-        serializer = NotificationSerializer(notifications, many=True)
+        leaves = Leave.objects.filter(status="Pending").order_by("-created_at")
+        serializer = LeaveSerializer(leaves, many=True)
         return Response({
             "success": True,
-            "message": "Notifications fetched successfully",
+            "message": "Leaves retrieved successfully",
             "data": serializer.data
-        }) 
+        })        
+        
+        
+
     
 
  # delete employee notification api
@@ -2034,3 +2141,148 @@ class UndoNotificationDeleteView(APIView):
                 "success": False,
                 "message": "Notification not found"
             }, status=404)                      
+            
+            
+            
+# 10/10/2025 logout function apply login generate acces token blacklist that token not active 
+class LogoutView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        refresh_token = request.data.get("refresh")
+
+        if not refresh_token:
+            return Response(
+                {"success": False, "message": "Refresh token is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            token = RefreshToken(refresh_token)
+            token.blacklist()  # ← this adds it to blacklist
+            return Response(
+                {"success": True, "message": "Logout successful"},
+                status=status.HTTP_205_RESET_CONTENT
+            )
+        except TokenError:
+            return Response(
+                {"success": False, "message": "Invalid or expired token"},
+                status=status.HTTP_400_BAD_REQUEST
+            )    
+            
+            
+    
+# resend otp view
+# resend otp view
+class ResendOTPView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        email = request.data.get("email")
+        if not email:
+            return Response({"success": False, "error": "Email is required"}, status=400)
+
+        try:
+            user = User.objects.get(email=email)
+        except User.DoesNotExist:
+            return Response({"success": False, "error": "Email not found"}, status=404)
+
+        otp, otp_hash = generate_otp()
+        expiry = timezone.now() + timezone.timedelta(minutes=10)
+
+        EmailOTP.objects.create(user=user, otp_hash=otp_hash, purpose="resend-otp", expires_at=expiry)
+
+        send_mail(
+            subject="Your OTP Code",
+            message=f"Your OTP for password reset is: {otp}",
+            from_email="no-reply@example.com",
+            recipient_list=[email],
+            fail_silently=False,
+        )
+
+        return Response({"success": True, "message": "OTP re-sent to your email"}, status=200)
+
+# -----------------------------
+# Verify OTP
+# -----------------------------
+class VerifyOTPView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        email = request.data.get("email")
+        otp = request.data.get("otp")
+
+        if not email or not otp:
+            return Response({"success": False, "error": "Email and OTP are required"}, status=400)
+
+        try:
+            user = User.objects.get(email=email)
+        except User.DoesNotExist:
+            return Response({"success": False, "error": "Invalid email"}, status=404)
+
+        otp_hash = hashlib.sha256(otp.encode()).hexdigest()
+
+        otp_record = EmailOTP.objects.filter(
+            user=user,
+            otp_hash=otp_hash,
+            is_used=False,
+            purpose__in=["reset_password", "resend-otp"],
+            expires_at__gte=timezone.now()
+        ).last()
+
+        if not otp_record:
+            return Response({"success": False, "error": "OTP invalid or expired"}, status=400)
+
+        otp_record.is_used = True
+        otp_record.is_verified = True  
+        otp_record.save()
+
+        return Response({"success": True, "message": "OTP verified successfully"}, status=200)
+    
+    
+    
+    
+    
+class NotificationStatusView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        today = timezone.localdate()
+        yesterday = today - timedelta(days=1)
+
+        # All notifications (latest first)
+        notifications = NotificationLog.objects.filter(user=user).order_by('-timestamp')
+
+        # Group by date
+        today_qs = notifications.filter(timestamp__date=today)
+        yesterday_qs = notifications.filter(timestamp__date=yesterday)
+        older_qs = notifications.exclude(timestamp__date__in=[today, yesterday])
+
+        # Serialize each group
+        today_data = NotificationSerializer(today_qs, many=True).data
+        yesterday_data = NotificationSerializer(yesterday_qs, many=True).data
+
+        # Group older by date (each day as heading)
+        older_grouped = {}
+        for notif in older_qs:
+            date_str = notif.timestamp.date().strftime("%Y-%m-%d")
+            if date_str not in older_grouped:
+                older_grouped[date_str] = []
+            older_grouped[date_str].append(NotificationSerializer(notif).data)
+
+        # Sort older dates descending
+        older_sorted = dict(sorted(older_grouped.items(), reverse=True))
+
+        # Always include all sections, even if empty
+        data = {
+            "Today": today_data if today_data else [],
+            "Yesterday": yesterday_data if yesterday_data else [],
+            "Older": older_sorted if older_sorted else {}
+        }
+
+        return Response({
+            "success": True,
+            "message": "Notifications fetched successfully",
+            "data": data
+        })

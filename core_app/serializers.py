@@ -2,6 +2,7 @@ from rest_framework import serializers
 from django.contrib.auth.hashers import make_password
 from django.core.validators import validate_email
 from .models import *
+from web_app.serializers import* 
 
 
 # -----------------------------
@@ -368,6 +369,8 @@ class ProjectSerializer(serializers.ModelSerializer):
 class ProjectReadSerializer(serializers.ModelSerializer):
     members = ProjectMembersReadSerializer(source="projectmembers_set", many=True, read_only=True)
     tasks = TaskReadSerializer(source="task_set", many=True, read_only=True)
+    project_images = ProjectImageSerializer(source="images", many=True, read_only=True)
+    ptoject_files = ProjectFileSerializer(source="files", many=True, read_only=True)
 
     class Meta:
         model = Project
@@ -388,9 +391,9 @@ class ProjectReadSerializer(serializers.ModelSerializer):
             "attachment",
             "members",
             "tasks",
-        ] 
-        
-        
+            "project_images",
+            "ptoject_files",
+        ]        
         
         
         
@@ -592,6 +595,23 @@ class FaceAttendanceSerializer(serializers.ModelSerializer):
         
         
 # employee notification serializer 
+       
+                     
+class TaskSerializer(serializers.ModelSerializer):
+    id = serializers.IntegerField(required=False)
+    class Meta:
+        model = Task
+        fields = ["id","title", "due_date","description", "assigned_by", "assigned_to", "status"]   
+        
+        
+        
+        
+class ResendOTPSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+   # purpose = serializers.ChoiceField(choices=[("login", "login"),])    
+   
+   
+   
 class NotificationSerializer(serializers.ModelSerializer):
     class Meta:
         model = NotificationLog
@@ -600,13 +620,8 @@ class NotificationSerializer(serializers.ModelSerializer):
             "user",
             "action",
             "timestamp",
-        ]                
-                     
-class TaskSerializer(serializers.ModelSerializer):
-    id = serializers.IntegerField(required=False)
-    class Meta:
-        model = Task
-        fields = ["id","title", "due_date","description", "assigned_by", "assigned_to", "status"]                     
+        ]
+           
                      
                      
                      

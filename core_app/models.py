@@ -312,13 +312,30 @@ class User(AbstractBaseUser, PermissionsMixin):
     def __str__(self):
         return f"{self.email} ({self.role})"\
     
-    
+# new branch table  
+class Branch(models.Model):
+    name = models.CharField(max_length=100)
+    location = models.CharField(max_length=255)
+    google_map_link = models.URLField(max_length=500, blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    address = models.TextField(null=True,blank=True)
+    status = models.CharField(max_length=20, default="Active")  # Active / Inactive
+    starting_time = models.TimeField(null=True,blank=True)
+    closing_time = models.TimeField(null=True,blank=True)
+    phone = models.CharField(max_length=20, blank=True, null=True)
+    email = models.EmailField(blank=True, null=True)
+    company_id = models.CharField(max_length=100, blank=True, null=True)
+
+    def __str__(self):
+        return self.name        
 # ---------------------------
 # Employee Detail
 # ---------------------------
 class EmployeeDetail(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="employee_profile")
     first_name = models.CharField(max_length=100)
+    company_branch = models.ForeignKey(Branch, on_delete=models.SET_NULL, null=True, blank=True)
     last_name = models.CharField(max_length=100)
     employee_id = models.CharField(max_length=50, unique=True, db_index=True)
     department = models.CharField(max_length=100, blank=True, null=True)
@@ -434,6 +451,10 @@ class Leave(models.Model):
     approved_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="approved_leaves")
     attachments = models.FileField(upload_to="leave_attachments/", blank=True, null=True)
     reason = models.TextField(blank=True, null=True)
+    is_team_lead_approved = models.BooleanField(default=False)
+    is_project_leader_approved = models.BooleanField(default=False)
+    is_hr_approved = models.BooleanField(default=False)
+    is_ceo_approved = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True, null=True)  # ✅ automatically saves apply time
 
 
@@ -465,6 +486,26 @@ class Project(models.Model):
     attachment = models.FileField(upload_to="Project_attachment/")
     assigned_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="project_assigned")
     reason_for_rejection = models.TextField(null=True,blank=True)
+    
+    
+class ProjectFile(models.Model):
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="files")
+    file = models.FileField(upload_to="project_files/")
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.project.project_name} - {self.file.name}"
+    
+    
+    
+# project images---------------------------------------------------------
+class ProjectImages(models.Model):
+    project = models.ForeignKey(Project, on_delete=models.CASCADE)
+    image = models.ImageField(upload_to="project_images/")
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Image for {self.project.project_name}"    
 
 
 # project members
@@ -495,7 +536,7 @@ class Task(models.Model):
 # ---------------------------
 class NotificationLog(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE)
-    action = models.CharField(max_length=100)
+    action = models.CharField(max_length=500)
     title = models.CharField(max_length=100,null=True,blank=True)
     is_active = models.BooleanField(default=True)
     timestamp = models.DateTimeField(auto_now_add=True)
@@ -520,3 +561,42 @@ class SalaryHistory(models.Model):
     employee = models.ForeignKey(EmployeeDetail, on_delete=models.CASCADE)
     amount = models.DecimalField(max_digits=10, decimal_places=2)
     effective_date = models.DateField()
+    
+    
+    
+    
+    
+# terms and conditions
+class TermsAndConditions(models.Model):
+    title = models.CharField(max_length=200, default="Terms and Conditions")
+    content = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Terms and Conditions (Last updated: {self.updated_at})"
+    
+
+    #  privacy policy
+class PrivacyPolicy(models.Model):
+    title = models.CharField(max_length=200, default="Privacy Policy")
+    content = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Privacy Policy (Last updated: {self.updated_at})"
+    
+#   about us
+class AboutUs(models.Model):
+    title = models.CharField(max_length=200, default="About Us")
+    content = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"About Us (Last updated: {self.updated_at})"    
+    
+    
+    
+    

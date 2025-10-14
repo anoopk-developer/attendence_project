@@ -16,6 +16,7 @@ urlpatterns = [
  path('leave-accept/', LeaveAcceptAPI.as_view(), name='leave-accept'),
  path('leave-reject/', LeaveRejectAPI.as_view(), name='leave-reject'),
  path('adminprofile/', AdminProfileView.as_view(), name='admin-profile'),
+path('edit-profile/',AdminEditProfile.as_view(),name='edit-profile'),
  path('birthdaystoday/', TodayBirthdayAPIView.as_view(), name='birthdays-today'),
  path('birthdaystomorrow/', TomorrowBirthdayAPIView.as_view(), name='birthdays-tomorrow'),
  path('birthdaysupcoming/', UpcomingBirthdayAPIView.as_view(), name='birthdays-upcoming'),
@@ -25,17 +26,15 @@ urlpatterns = [
  path('employee-designation-counts/',EmployeeCountByDesignation.as_view(),name='employee-designation-counts'),
  path('todays-attendance-count/',TodaysAttendanceCount.as_view(),name='todays-attendance-count'),
  path("employeesdetails/<int:employee_id>/", EmployeeAttendanceView.as_view(), name="employee-attendance"),
-# path( "employeedetailwithleave/<int:employee_id>/", Employeedetailswithleave.as_view(), name="employee-details-with-leave"),
-path("employee-detail-with-leave/<int:pk>/", EmployeeDetailWithLeave.as_view(), name="employee-detail-with-leave"),
+ path("employee-detail-with-leave/<int:pk>/", EmployeeDetailWithLeave.as_view(), name="employee-detail-with-leave"),
  path("holidayscreate/", HolidayCreateView.as_view(), name="holiday-create"),
   path('holidayslist/', HolidayListView.as_view(), name='holiday-list'),
   path('birthdaystodaywish/', TodayBirthdaywishAPIView.as_view(), name='birthdays-todaywish'),
   path('birthdaystodaywishid/<int:pk>/', TodayBirthdayWishidAPIView.as_view(), name='birthday-wish-by-id'),
-  path("employeesactivity/", EmployeeActivityListAPIView.as_view(), name="employeeActivity-list"),
-  path('employee-remove/', RemoveEmployeeAPIView.as_view(), name='employee-remove'),
+path("employeesactivity/", EmployeeActivityListAPIView.as_view(), name="employeeActivity-list"),
+path('employee-remove/', RemoveEmployeeAPIView.as_view(), name='employee-remove'),
 path('employee-reactivate/', ReactivateEmployeeAPIView.as_view(), name='employee-reactivate'),
 path('update-project/<int:pk>/',UpdateProjectApi.as_view(),name='update-project'),
-
 path('inactive-employees-list/',InactiveEmployeeListAPIView.as_view(),name='inactive-employees-list'),
 path('active-employees-list/',ActiveEmployeeListAPIView.as_view(),name='active-employees-list'),
 path('notificationsuser/<int:user_id>/', NotificationLogByUserAPIView.as_view(), name='user-notifications'),
@@ -44,16 +43,53 @@ path('taskcount/', TaskCountAPIView.as_view(), name='task-count'),
 path('add-tasks-to-project/',AddTasksToProjectApi.as_view(),name='add-tasks-to-project'),
 path('update-task/<int:task_id>/',EditTaskApi.as_view(),name='update-task'),
 path('delete-task/<int:task_id>/',DeleteTaskApi.as_view(),name='delete-task'),
-
 path("attendanceedit/<int:pk>/", AttendanceEditView.as_view(), name="attendance-update"),
 path("projectsdelete/<int:project_id>/", DeleteProjectApi.as_view(), name="delete-project"),
 path('list-all-tasks/',TaskListAPIView.as_view(),name='list-all-tasks'),
 path('taskslast-7-days/', Last7DaysTasksAPIView.as_view(), name='tasks-last-7-days'),
 path("taskliststatusfilter/<str:status_filter>/", TaskStatusFilterAPIView.as_view(), name="task-status-filter"),
-path('project-detailsneww/<int:project_id>/', ProjectDetailnewwAPIView.as_view(), name='project-detailneww'),
+path('project-details-by-id/<int:project_id>/',  ProjectDetailByIDAPIView.as_view(), name='project-details-by-id'),
 path('update-notificationlog/<int:pk>/', NotificationLogEditAPIView.as_view(), name='update-notificationlog'),
 path('pending-approval-count/',DashboardPendingApprovalsCountView.as_view(),name='pending-approval-count'),
 path('taskpercentage/', TaskPercentageAPIView.as_view(), name='task-percentage'),
+path('projectfile/', ProjectFileListCreateAPIView.as_view(), name='project-file'),
+path('project-filesview/<int:project_id>/', ProjectFileRetrieveAPIView.as_view(), name='project-file-detail'),
+path('project-filesupdate/<int:id>/', ProjectFileUpdateAPIView.as_view(), name='project-file-update'),
+path('projectfiledelete/<int:id>/', ProjectFileDeleteAPIView.as_view(), name='projectfile-delete'),
+path('add-list-project-image/',ProjectImageUploadApi.as_view(),name='add-project-image'),
+path('add-list-project-image/<int:project_id>/',ProjectImageUploadApi.as_view(),name='add-list-project-image'),
+path('delete-update-project-image/<int:image_id>/',ProjectImageDeleteUpdateApi.as_view(),name='delete-update-project-image'),
+path("employeesdetailspast7days/<int:employee_id>/", EmployeeAttendanceViewpast7days.as_view(), name="employee-attendancepast7days"),
+path('create-list-branch/', BranchCreateListView.as_view(), name='create-list-branch'),
+path('last-7-days-employee-activity/', Last7DaysActivityListAPIView.as_view(), name='last-7-days-employee-activity'),
+path('filter-emp-attendance-by-status/<int:employee_id>/',EmployeeAttendanceFilterByStatusView.as_view(),name='filter-emp-attendance-by-status'),    
+path('employee-details-by-date-range/',AttendanceByDateRangeView.as_view(),name='employee-details-by-date-range'),
+path('leave-details-diagram/', LeaveDetailsDiagramView.as_view(), name='leave-details-diagram'),
+path('WorkinghoursfractionList/<int:employee_id>/', WorkinghoursfractionListView.as_view(), name='WorkinghoursfractionList'),
+path('weeklyworkinghours/<int:employee_id>/', WeeklyWorkinghoursListView.as_view(), name='weekly-hours'),
+
+path("employeedetailedit/<int:pk>/", EmployeeDetailEdit.as_view(), name="employeeedit"),
+path('employee-project-task-by-empid/<int:employee_id>/',EmployeeIdProjectsTasksAPIView.as_view(),name='employee-project-task-by-empid'),
+path('projectmemberslist/<int:user_id>/', ProjectMembersListAPIView.as_view(), name='projectmemberslist'),
+path('attendanceyearly/', AttendanceYearlyStatsAPIView.as_view(), name='attendance-yearly-current'),
+    
+    # Specific year
+path('attendanceyearly/<int:year>/', AttendanceYearlyStatsAPIView.as_view(), name='attendance-yearly-stats'),
+path('leavesyearly/<int:year>/', LeaveYearlyStatsAPIView.as_view(), name='leavesyearly'),
+path('leavesyearly/', LeaveYearlyStatsAPIView.as_view(), name='leavesyearly'),
+
+path('add-list-privacy-policy/',AddListPrivacyPolicyAPIView.as_view(),name='add-list-privacy-policy'),
+path('privacy-policy-edit/<int:pk>/',PrivacyPolicyEditAPIView.as_view(),name='privacy-policy-edit'),
+
+path('terms-and-conditions/', AddListTermsAndConditionsAPIView.as_view(), name='terms-and-conditions'),
+path('terms-and-conditionsedit/<int:pk>/', TermsAndConditionsEditAPIView.as_view(), name='terms-and-conditions-edit'),
+path('about-us-add-list/', AddListAboutUsAPIView.as_view(), name='about-us-add-list'),
+path('about-usedit/<int:pk>/', AboutUsEditAPIView.as_view(), name='about-us-edit'),
+
+
+ # Weekly total hours
+
+
 
 
 

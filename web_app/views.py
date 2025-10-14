@@ -195,26 +195,64 @@ class LeaveAcceptAPI(APIView):
 
         leave = get_object_or_404(Leave, id=leave_id)
 
+        # ✅ Prevent re-approval or re-rejection
         if leave.status != "Pending":
             return Response(
                 {"success": False, "message": f"Leave already {leave.status.lower()}"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        approver = request.user
+        employee_profile = getattr(approver, "employee_profile", None)
+        approver_role = getattr(approver, "role", None)
+        approver_type = getattr(employee_profile, "user_type", None)
+
+        # ✅ Convert to lowercase for case-insensitive comparison
+        approver_type_lower = approver_type.lower() if approver_type else ""
+
+        # ✅ Mark approval fields based on approver role/type
+        if approver_role in ["admin", "superadmin"]:
+            leave.is_team_lead_approved = True
+            leave.is_project_leader_approved = True
+            leave.is_hr_approved = True
+            leave.is_ceo_approved = True
+
+        elif approver_type_lower == "team lead":
+            leave.is_team_lead_approved = True
+
+        elif approver_type_lower == "project lead":
+            leave.is_project_leader_approved = True
+
+        elif approver_type_lower == "hr":
+            leave.is_hr_approved = True
+
+        elif approver_type_lower == "ceo":
+            leave.is_ceo_approved = True
+
+        # ✅ Overall leave becomes Approved
         leave.status = "Approved"
-        leave.approved_by = request.user
+        leave.approved_by = approver
         leave.save()
 
-        # Send notification to the employee who applied for leave
+        # 📨 Notify the employee
         if leave.user:
             NotificationLog.objects.create(
                 user=leave.user,
-                action=f"Your leave request for {leave.leave_type} from {leave.start_date} to {leave.end_date} has been approved by {request.user.email}",
-                title = "Leave Approved"
+                title="Leave Approved",
+                action=(
+                    f"Your leave request for {leave.leave_type} "
+                    f"({leave.start_date} to {leave.end_date}) "
+                    f"has been approved by {approver.email}"
+                ),
             )
 
         return Response(
-            {"success": True, "message": "Leave request approved successfully"},
+            {
+                "success": True,
+                "message": (
+                    f"Leave approved successfully by {approver_type or approver_role or approver.email}"
+                ),
+            },
             status=status.HTTP_200_OK,
         )
 
@@ -606,43 +644,50 @@ class EmployeeCountByDesignation(APIView):
         })
 
 # todays attendance count 
+# todays attendance count  all employees
 class TodaysAttendanceCount(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        user = request.user
-        employee = user.employee_profile
-        today = date.today()
+        today = timezone.localdate()
 
-        # ✅ Present and Late counts
-        attendances = Attendance.objects.filter(employee=employee, date=today, status="Present")
+        # Get each employee's first punch-in record for today
+        first_punches = (
+            Attendance.objects.filter(date=today)
+            .values("employee")
+            .annotate(first_in=Min("in_time"))
+        )
 
         present_count = 0
         late_count = 0
-        for att in attendances:
-            if att.in_time:
-                punch_time = att.in_time.time()
+
+        for record in first_punches:
+            first_in = record["first_in"]
+            if first_in:
+                # Convert to local time if timezone-aware
+                local_in_time = timezone.localtime(first_in)
+                punch_time = local_in_time.time()
+
+                # ✅ Compare correctly
                 if punch_time <= time(9, 40):
                     present_count += 1
                 else:
                     late_count += 1
 
-        # ✅ Leave count (approved leaves covering today)
+        # Leave count (unique employees on leave today)
         leave_count = Leave.objects.filter(
-            employee=employee,
             start_date__lte=today,
             end_date__gte=today,
             status="Approved"
-        ).count()
+        ).values("employee").distinct().count()
 
         return Response({
             "success": True,
             "date": today,
-            "presence_count": present_count,
+            "present_count": present_count,
             "late_count": late_count,
             "leave_count": leave_count
-        })
-        
+        })        
         
 from rest_framework.views import APIView
 from django.shortcuts import get_object_or_404  
@@ -1336,7 +1381,7 @@ class TaskStatusFilterAPIView(APIView):
         
         
         
-class ProjectDetailnewwAPIView(APIView):
+class ProjectDetailByIDAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, project_id):
@@ -1579,19 +1624,1171 @@ class EmployeeActivityListAPIView(APIView):
             "count": len(employee_activities),
             "activities": employee_activities
         })
- 
- 
- 
- 
- 
         
-# employee notifications api
+        
+# add  , list  project images to the project
+class ProjectImageUploadApi(APIView):
+    permission_classes = [IsAuthenticated]
+    parser_classes = (MultiPartParser, FormParser)
+
+    def post(self, request, *args, **kwargs):
+        serializer = ProjectImageSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response({
+                "success": True,
+                "message": "Project image uploaded successfully",
+                "data": serializer.data
+            }, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    def get(self, request, project_id, *args, **kwargs):
+        images = ProjectImages.objects.filter(project__id=project_id)
+        serializer = ProjectImageSerializer(images, many=True)
+        return Response({
+            "success": True,
+            "message": f"Images for project ID {project_id} fetched successfully",
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
+    
+
+# image patch delete api 
+class ProjectImageDeleteUpdateApi(APIView):
+    permission_classes = [IsAuthenticated]
+    parser_classes = (MultiPartParser, FormParser)
+    def patch(self, request, image_id, *args, **kwargs):
+        image = get_object_or_404(ProjectImages, id=image_id)
+        serializer = ProjectImageSerializer(image, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response({
+                "success": True,
+                "message": "Project image updated successfully",
+                "data": serializer.data
+            }, status=status.HTTP_200_OK)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    def delete(self, request, image_id, *args, **kwargs):
+        image = get_object_or_404(ProjectImages, id=image_id)
+        image.delete()
+        return Response({
+            "success": True,
+            "message": f"Project image with ID {image_id} deleted successfully"
+        }, status=status.HTTP_200_OK)        
+        
+# branch creation listing api 
+
+class BranchCreateListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = BranchSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response({
+                "success": True,
+                "message": "Branch created successfully",
+                "data": serializer.data
+            }, status=status.HTTP_201_CREATED)
+        return Response({
+            "success": False,
+            "errors": serializer.errors
+        }, status=status.HTTP_400_BAD_REQUEST)
+    
+    def get(self, request):
+        branches = Branch.objects.all()
+        serializer = BranchSerializer(branches, many=True)
+        return Response({
+            "success": True,
+            "message": "Branches fetched successfully",
+            "data": serializer.data
+        })   
+        
+        
+#  last 7 days activity list api
+class Last7DaysActivityListAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        seven_days_ago = timezone.now() - timedelta(days=7)
+        IST = pytz.timezone("Asia/Kolkata")
+
+        activities = []
+
+        # --- Employee leaves in last 7 days ---
+        leaves = Leave.objects.filter(created_at__gte=seven_days_ago).select_related('employee')
+        for leave in leaves:
+            activity_time = timezone.localtime(leave.created_at, IST)
+            activities.append({
+                "type": "Employee",
+                "id": leave.employee.id,
+                "employee_id": leave.employee.employee_id,
+                "first_name": leave.employee.first_name,
+                "last_name": leave.employee.last_name,
+                "designation": leave.employee.designation,
+                "activity_type": f"Leave Applied ({leave.status})",
+                "activity_time": activity_time.strftime("%Y-%m-%d %H:%M:%S %Z")
+            })
+
+        # --- New employees added in last 7 days ---
+        new_employees = EmployeeDetail.objects.filter(created_at__gte=seven_days_ago)
+        for emp in new_employees:
+            activity_time = timezone.localtime(emp.created_at, IST)
+            activities.append({
+                "type": "Employee",
+                "id": emp.id,
+                "employee_id": emp.employee_id,
+                "first_name": emp.first_name,
+                "last_name": emp.last_name,
+                "designation": emp.designation,
+                "activity_type": "New Employee Added",
+                "activity_time": activity_time.strftime("%Y-%m-%d %H:%M:%S %Z")
+            })
+
+        # --- Employees removed in last 7 days ---
+        removed_employees = EmployeeDetail.objects.filter(
+            user__is_active=False,
+            updated_at__gte=seven_days_ago
+        )
+        for emp in removed_employees:
+            activity_time = timezone.localtime(emp.updated_at, IST)
+            activities.append({
+                "type": "Employee",
+                "id": emp.id,
+                "employee_id": emp.employee_id,
+                "first_name": emp.first_name,
+                "last_name": emp.last_name,
+                "designation": emp.designation,
+                "activity_type": "Employee Deleted",
+                "activity_time": activity_time.strftime("%Y-%m-%d %H:%M:%S %Z")
+            })
+
+        # --- New projects added in last 7 days ---
+        new_projects = Project.objects.filter(created_at__gte=seven_days_ago)
+        for proj in new_projects:
+            activity_time = timezone.localtime(proj.created_at, IST)
+            activities.append({
+                "type": "Project",
+                "id": proj.id,
+                "project_name": proj.project_name,
+                "client": proj.client,
+                "assigned_by": proj.assigned_by.first_name if proj.assigned_by else None,
+                "priority": proj.priority,  
+                "status": proj.status,
+                "activity_type": "New Project Added",
+                "activity_time": activity_time.strftime("%Y-%m-%d %H:%M:%S %Z")
+            })
+        # --- Projects updated in last 7 days ---
+        updated_projects = Project.objects.filter(
+            updated_at__gte=seven_days_ago
+        ).exclude(created_at__gte=seven_days_ago)  # exclude those already counted as new
+        for proj in updated_projects:
+            activity_time = timezone.localtime(proj.updated_at, IST)
+            activities.append({
+                "type": "Project",
+                "id": proj.id,
+                "project_name": proj.project_name,
+                "client": proj.client,
+                "assigned_by": proj.assigned_by
+                .first_name if proj.assigned_by else None,
+                "priority": proj.priority,
+                "status": proj.status,
+                "activity_type": "Project Updated",
+                "activity_time": activity_time.strftime("%Y-%m-%d %H:%M:%S %Z")
+            })
+        # --- New tasks added in last 7 days ---
+        new_tasks = Task.objects.filter(created_at__gte=seven_days_ago) 
+        for task in new_tasks:
+            activity_time = timezone.localtime(task.created_at, IST)
+            activities.append({
+                "type": "Task",
+                "id": task.id,
+                "title": task.title,
+                "description": task.description,
+                "project_name": task.project.project_name if task.project else None,
+                "assigned_by": task.assigned_by.first_name if task.assigned_by else None,
+                "assigned_to": task.assigned_to.first_name if task.assigned_to else None,
+                "status": task.status,
+                "activity_type": "New Task Created",
+                "activity_time": activity_time.strftime("%Y-%m-%d %H:%M:%S %Z")
+            })
+        # --- Attendance updated in last 7 days ---
+        attendances = Attendance.objects.filter(updated_at__gte=seven_days_ago).select_related('employee')
+        for att in attendances:
+            emp = att.employee
+            activity_time = timezone.localtime(att.updated_at, IST)
+            activities.append({
+                "type": "Attendance",
+                "id": att.id,
+                "employee_id": emp.employee_id,
+                "first_name": emp.first_name,
+                "last_name": emp.last_name,
+                "activity_type": "Attendance Updated",
+                "activity_time": activity_time.strftime("%Y-%m-%d %H:%M:%S %Z")
+            })
+        # --- Sort by latest activity time ---
+        activities.sort(key=lambda x: x['activity_time'], reverse=True)
+        return Response({
+            "success": True,
+            "count": len(activities),
+            "activities": activities
+        })     
+        
+        
+        
+        
+        
+ # list employee attendence details by date range
+class AttendanceByDateRangeView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        employee_id = request.query_params.get("employee_id")
+        start_date = request.query_params.get("start_date")
+        end_date = request.query_params.get("end_date")
+
+        if not employee_id or not start_date or not end_date:
+            return Response({
+                "status": False,
+                "message": "employee_id, start_date, and end_date are required"
+            }, status=400)
+
+        try:
+            employee = EmployeeDetail.objects.get(id=employee_id)
+        except EmployeeDetail.DoesNotExist:
+            return Response({
+                "status": False,
+                "message": "Employee not found"
+            }, status=404)
+
+        attendances = Attendance.objects.filter(
+            employee=employee,
+            date__range=[start_date, end_date]
+        ).order_by("-date")
+
+        serializer = AttendanceSerializer(attendances, many=True)
+        return Response({
+            "status": True,
+            "message": f"Attendance records for {employee.first_name} from {start_date} to {end_date}",
+            "data": serializer.data
+        })          
+                         
+        
+        
+        
+        
+        
+        
+        
+        
+#  09/10/2025   project database addition database create project file files add using project id   
+class ProjectFileListCreateAPIView(generics.ListCreateAPIView):
+    queryset = ProjectFile.objects.all().select_related('project')
+    serializer_class = ProjectFileSerializer
+    permission_classes = [IsAuthenticated]    
+    
+    
+    
+# project id wise get files     
+class ProjectFileRetrieveAPIView(generics.ListAPIView):
+    serializer_class = ProjectFileSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        project_id = self.kwargs['project_id']
+        return ProjectFile.objects.filter(project__id=project_id).select_related('project')
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+        if queryset.exists():
+            serializer = self.get_serializer(queryset, many=True)
+            return Response({
+                "success": True,
+                "data": serializer.data
+            })
+        else:
+            return Response({
+                "success": False,
+                "message": "No files found"
+            })
+            
+            
+            
+            
+            
+class ProjectFileUpdateAPIView(generics.UpdateAPIView):
+    queryset = ProjectFile.objects.all()
+    serializer_class = ProjectFileSerializer
+    permission_classes = [IsAuthenticated]
+    lookup_field = 'id'
+
+    def update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=True)  # Allow partial update
+        serializer.is_valid(raise_exception=True)
+        self.perform_update(serializer)
+        return Response({
+            "success": True,
+            "message": "File updated successfully",
+            "data": serializer.data
+        })            
+ 
+
+
+class ProjectFileDeleteAPIView(generics.DestroyAPIView):
+    queryset = ProjectFile.objects.all()
+    serializer_class = ProjectFileSerializer
+    permission_classes = [IsAuthenticated]
+    lookup_field = 'id'  # Delete by ID from URL
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()  # Get the object to delete
+        self.perform_destroy(instance)  # Delete it
+        return Response(
+            {"success": True, "message": "Deleted successfully"},
+            status=status.HTTP_200_OK
+        )
+        
+        
+
+        
+        
+        
+class EmployeeAttendanceViewpast7days(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, employee_id):
+        employee = get_object_or_404(EmployeeDetail, id=employee_id)
+        serializer = EmployeeAttendanceSerializerpast7days(employee)
+        return Response({
+            "status": True,
+            "data": serializer.data
+        })
+        
+        
+# GET past 7 days filtered by status
+# filter employee attendance by status present , absent , late 
+class EmployeeAttendanceFilterByStatusView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, employee_id):
+        status = request.query_params.get("status")
+        status = status.strip().title()
+
+        if status not in ["Present", "Absent", "Late"]:
+            return Response({
+                "status": False,
+                "message": "Invalid status. Must be 'Present', 'Absent', or 'Late'."
+            }, status=400)
+
+        # Get the employee
+        employee = get_object_or_404(EmployeeDetail, id=employee_id)
+
+        # Filter employee's attendance by status
+        latest_status = (
+            Attendance.objects.filter(employee=employee, date=OuterRef("date"))
+            .order_by("-out_time")
+            .values("status")[:1]
+        )
+
+        qs = (
+            Attendance.objects.filter(employee=employee, status=status)
+            .values("date")
+            .annotate(
+                in_time=Min("in_time"),
+                out_time=Max("out_time"),
+                status=Subquery(latest_status),
+            )
+            .order_by("-date")
+        )
+
+        # Serialize the grouped daily data
+        daily_data = DailyAttendanceSerializer(qs, many=True).data
+
+        # Include employee info
+        employee_data = {
+            "id": employee.id,
+            "first_name": employee.first_name,
+            "last_name": employee.last_name,
+            "profile_pic": employee.profile_pic.url if employee.profile_pic else None,
+            "employee_id": employee.employee_id,
+            "attendances": daily_data,
+        }
+
+        return Response({
+            "status": True,
+            "message": f"Attendance with status '{status}' fetched successfully",
+            "data": employee_data,
+        })
+        
+        
+from datetime import datetime, time       
+        
+class LeaveDetailsDiagramView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        # --- Attendance summary for all employees ---
+        attendance_qs = Attendance.objects.all()
+
+        # Count absent
+        absent_count = attendance_qs.filter(status__iexact="absent").count()
+
+        # Count work from home (case-insensitive, multiple variations)
+        wfh_count = attendance_qs.filter(
+            Q(attendance_type__iexact="wfh") | Q(attendance_type__iexact="work from home")
+        ).count()
+
+        # --- On-time and late attendance ---
+        on_time_count = 0
+        late_count = 0
+        for att in attendance_qs:
+            if att.in_time:
+                in_time_local = timezone.localtime(att.in_time).time()
+                
+                # On-time: 9:00 to 9:30
+                if time(9, 0) <= in_time_local <= time(9, 30):
+                    on_time_count += 1
+                # Late: 9:31 to 9:45
+                elif time(9, 31) <= in_time_local <= time(9, 45):
+                    late_count += 1
+
+        # --- Leave summary ---
+        leave_qs = Leave.objects.all()
+        leave_count = leave_qs.count()
+        sick_leave_count = leave_qs.filter(reason__iexact="sick leave").count()
+
+        # --- Prepare data ---
+        data = {
+            "absent_count": absent_count,
+            "leave_count": leave_count,
+            "sick_leave_count": sick_leave_count,
+            "wfh_count": wfh_count,
+            "on_time_count": on_time_count,
+            "late_count": late_count,  # ✅ new late attendance count
+        }
+
+        # Serialize the data
+        serializer = AttendanceLeaveSummarydiagramSerializer(instance=data)
+
+        return Response({
+            "success": True,
+            "data": serializer.data
+        })
+        
+        
+        
+        
+
+# Admin profile view        
+class AdminProfileView(RetrieveAPIView):
+    serializer_class = AdminProfileSerializerView
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        user = request.user
+
+        # Check role
+        if user.role not in ['admin', 'superadmin']:
+            return Response(
+                {
+                    "success": False,
+                    "message": "Access denied. Only admins can access this profile.",
+                    "data": {}
+                },
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Get employee profile (related to User)
+        try:
+            employee = user.employee_profile
+        except EmployeeDetail.DoesNotExist:
+            return Response(
+                {
+                    "success": False,
+                    "message": "Employee profile not found for this admin.",
+                    "data": {}
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        serializer = self.get_serializer(employee)
+        return Response(
+            {
+                "success": True,
+                "message": "Admin profile fetched successfully.",
+                "data": serializer.data
+            },
+            status=status.HTTP_200_OK
+        )
+
+# edit admin profile api
+class AdminEditProfile(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, *args, **kwargs):
+        user = request.user
+
+        # Allow only admin/superadmin
+        if user.role not in ["admin", "superadmin"]:
+            return Response(
+                {
+                    "success": False,
+                    "message": "Access denied. Only admins can edit this profile.",
+                },
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        try:
+            employee = user.employee_profile
+        except EmployeeDetail.DoesNotExist:
+            return Response(
+                {
+                    "success": False,
+                    "message": "Employee profile not found.",
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        serializer = AdminProfileSerializerView(employee, data=request.data, partial=True)
+
+        if serializer.is_valid():
+            serializer.save()
+            return Response(
+                {
+                    "success": True,
+                    "message": "Profile edited successfully.",
+                    "data": serializer.data
+                },
+                status=status.HTTP_200_OK
+            )
+
+        return Response(
+            {
+                "success": False,
+                "message": "Profile update failed.",
+                "errors": serializer.errors
+            },
+            status=status.HTTP_400_BAD_REQUEST
+        )
                  
 
+class WorkinghoursfractionListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, employee_id):
+        today = timezone.localdate()
+
+        attendance_qs = Attendance.objects.filter(
+            employee__id=employee_id,
+            status__iexact='Present',
+            date=today
+        ).order_by('-date')
+
+        if not attendance_qs.exists():
+            return Response(
+                {
+                    "success": False,
+                    "detail": "No present attendance records found for this employee today."
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        serializer = WorkinghoursfractionSerializer(attendance_qs, many=True)
+        return Response(
+            {
+                "success": True,
+                "data": serializer.data
+            },
+            status=status.HTTP_200_OK
+        )
         
         
         
+class WeeklyWorkinghoursListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, employee_id):
+        today = timezone.localdate()
+        start_of_week = today - timedelta(days=today.weekday())  # Monday
+        end_of_week = start_of_week + timedelta(days=6)  # Sunday
+
+        attendance_qs = Attendance.objects.filter(
+            employee__id=employee_id,
+            status__iexact='Present',
+            date__range=[start_of_week, end_of_week]
+        )
+
+        if not attendance_qs.exists():
+            return Response(
+                {"success": False, "detail": "No present attendance records found for this employee this week."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Aggregate total seconds worked in the week
+        total_seconds = 0
+        for record in attendance_qs:
+            if record.in_time and record.out_time:
+                delta = record.out_time - record.in_time
+                total_seconds += delta.total_seconds()
+
+        # Attach total_seconds to any attendance object (for serializer access)
+        first_record = attendance_qs.first()
+        setattr(first_record, 'weekly_seconds', total_seconds)
+
+        serializer = WeeklyWorkinghoursSerializer(first_record)
+        return Response(
+            {"success": True, "data": serializer.data},
+            status=status.HTTP_200_OK
+        )
+        
+        
+        
+        
+class EmployeeDetailEdit(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        employee = get_object_or_404(EmployeeDetail, pk=pk)
+        serializer = EmployeeDetaileditSerializer(employee)
+        return Response({
+            "status": True,
+            "data": serializer.data
+        })
+
+    def put(self, request, pk):
+        employee = get_object_or_404(EmployeeDetail, pk=pk)
+        serializer = EmployeeDetaileditSerializer(employee, data=request.data, partial=True)
+
+        if serializer.is_valid():
+            serializer.save()
+
+            # ✅ Identify updated fields
+            updated_fields = list(serializer.validated_data.keys())
+
+            # ✅ Build response for updated fields
+            filtered_response = {}
+
+            for field in updated_fields:
+                if field == "bank_details":
+                    # Fetch latest updated bank details
+                    bank_qs = BankDetail.objects.filter(employee=employee)
+                    filtered_response["bank_details"] = BankDetailSerializer(bank_qs, many=True).data
+                elif field in serializer.data:
+                    filtered_response[field] = serializer.data[field]
+
+            return Response({
+                "status": True,
+                "message": "Employee and bank details updated successfully.",
+                "updated_data": filtered_response
+            }, status=status.HTTP_200_OK)
+
+        return Response({
+            "status": False,
+            "errors": serializer.errors
+        }, status=status.HTTP_400_BAD_REQUEST)
+        
+        
+        
+# single employee project and task details by employee id 
+class EmployeeIdProjectsTasksAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, employee_id):
+        try:
+            # Get employee detail by employee_id
+            employee = EmployeeDetail.objects.get(id=employee_id)
+            user = employee.user
+        except EmployeeDetail.DoesNotExist:
+            return Response({"status": "failed", "message": "Employee not found"}, status=404)
+
+        # ------------------------
+        # Projects for this employee
+        # ------------------------
+        projects = ProjectMembers.objects.filter(
+            team_leader__contains=[user.id]
+        ) | ProjectMembers.objects.filter(
+            project_manager__contains=[user.id]
+        ) | ProjectMembers.objects.filter(
+            tags__contains=[user.id]
+        )
+
+        project_list = []
+        for pm in projects:
+            project_list.append({
+                "project_id": pm.project.id,
+                "project_name": pm.project.project_name,
+                "client": pm.project.client,
+                "start_date": pm.project.start_date,
+                "end_date": pm.project.end_date,
+                "priority": pm.project.priority,
+                "status": pm.project.status,
+            })
+
+        # ------------------------
+        # Tasks assigned to this employee
+        # ------------------------
+        tasks = Task.objects.filter(assigned_to=user)
+        task_list = []
+        for task in tasks:
+            task_list.append({
+                "task_id": task.id,
+                "title": task.title,
+                "description": task.description,
+                "status": task.status,
+                "project": task.project.project_name if task.project else None,
+                "assigned_by": task.assigned_by.email if task.assigned_by else None,
+                "assigned_to": task.assigned_to.email if task.assigned_to else None,
+                "created_at": task.created_at,
+                "updated_at": task.updated_at,
+            })
+
+        return Response({
+            "status": "success",
+            "employee_id": employee.employee_id,
+            "employee_name": f"{employee.first_name} {employee.last_name}",
+            "projects": project_list,
+            "tasks": task_list
+        })   
+        
+        
+        
+        
+class ProjectmemberslistAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, employee_id):
+        try:
+            # Fetch employee
+            employee = EmployeeDetail.objects.get(id=employee_id)
+            user = employee.user
+        except EmployeeDetail.DoesNotExist:
+            return Response({"status": "failed", "message": "Employee not found"}, status=404)
+
+        # ------------------------------------
+        # Get all Projects for which this employee is involved
+        # ------------------------------------
+        projects = ProjectMembers.objects.filter(
+            Q(team_leader__contains=[user.id]) |
+            Q(project_manager__contains=[user.id]) |
+            Q(tags__contains=[user.id])
+        )
+
+        project_list = []
+        for pm in projects:
+            project = pm.project
+
+            # Get all user objects for each role
+            def get_user_names(id_list):
+                users = User.objects.filter(id__in=id_list)
+                return [f"{u.first_name} {u.last_name}".strip() or u.username for u in users]
+
+            project_list.append({
+                "project_id": project.id,
+                "project_name": project.project_name,
+                "client": project.client,
+                "start_date": project.start_date,
+                "end_date": project.end_date,
+                "priority": project.priority,
+                "status": project.status,
+                "team_leaders": get_user_names(pm.team_leader),
+                "project_managers": get_user_names(pm.project_manager),
+                "members": get_user_names(pm.tags),
+            })
+
+        # ------------------------------------
+        # Get all Tasks assigned to this employee
+        # ------------------------------------
+        tasks = Task.objects.filter(assigned_to=user)
+        task_list = []
+        for task in tasks:
+            task_list.append({
+                "task_id": task.id,
+                "title": task.title,
+                "description": task.description,
+                "status": task.status,
+                "project": task.project.project_name if task.project else None,
+                "assigned_by": f"{task.assigned_by.first_name} {task.assigned_by.last_name}".strip() if task.assigned_by else None,
+                "assigned_to": f"{task.assigned_to.first_name} {task.assigned_to.last_name}".strip() if task.assigned_to else None,
+                "created_at": task.created_at,
+                "updated_at": task.updated_at,
+                "due_date": task.due_date,
+            })
+
+        # ------------------------------------
+        # Final Response
+        # ------------------------------------
+        return Response({
+            "status": "success",
+            "employee_id": employee.employee_id,
+            "employee_name": f"{employee.first_name} {employee.last_name}",
+            "projects": project_list,
+            "tasks": task_list
+        })             
+
+        
+        
+class ProjectMembersListAPIView(APIView):
+    def get(self, request, user_id):
+        members = ProjectMembers.objects.select_related('project').all()
+
+        filtered_members = []
+        for member in members:
+            # Check if user_id matches any role
+            is_team_leader = member.team_leader and member.team_leader.get("id") == user_id
+            is_project_manager = member.project_manager and member.project_manager.get("id") == user_id
+            is_team_member = (
+                isinstance(member.tags, list)
+                and any(isinstance(tag, dict) and tag.get("id") == user_id for tag in member.tags)
+            )
+
+            if is_team_leader or is_project_manager or is_team_member:
+                filtered_members.append(member)
+
+        serializer = ProjectMemberslistSerializer(filtered_members, many=True)
+
+        # ✅ Build a clean member list (team leader + project manager + tags)
+        formatted_data = []
+        for item in serializer.data:
+            project_members = []
+
+            if item["team_leader"]:
+                project_members.append(item["team_leader"])
+            if item["project_manager"]:
+                project_members.append(item["project_manager"])
+            if item["tags"]:
+                project_members.extend(item["tags"])
+
+            # Remove duplicates based on 'id'
+            unique_members = {m["id"]: m for m in project_members if "id" in m}.values()
+
+            formatted_data.append({
+                "project_id": item["id"],
+                "project_name": item["project_name"],
+                "members": list(unique_members)
+            })
+
+        return Response(
+            {
+                "status": True,
+                "message": "Project members fetched successfully.",
+                "data": formatted_data,
+            },
+            status=status.HTTP_200_OK,
+        )
+        
+from django.db.models import Count
+from django.db.models.functions import ExtractMonth
+import calendar        
+import datetime  # this is the module
+        
+class AttendanceYearlyStatsAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, year=None):
+        # Use current year if no year provided
+        if year is None:
+            year = datetime.date.today().year
+
+        # Filter attendance by year and include "Present" or "Late" (case-insensitive)
+        attendances = Attendance.objects.filter(
+            date__year=year
+        ).filter(
+            Q(status__iexact="Present") | Q(status__iexact="Late")
+        )
+
+        # Annotate month-wise count
+        monthly_data = (
+            attendances.annotate(month=ExtractMonth("date"))
+            .values("month")
+            .annotate(count=Count("id"))
+            .order_by("month")
+        )
+
+        # Format data for chart (Jan–Dec)
+        chart_data = []
+        for month_num in range(1, 13):
+            month_name = calendar.month_abbr[month_num]
+            count = next(
+                (item["count"] for item in monthly_data if item["month"] == month_num),
+                0
+            )
+            chart_data.append({"month": month_name, "count": count})
+
+        # Total attendance count for the year
+        total_attendance = attendances.count()
+
+        response_data = {
+            "success": True,
+            "year": year,
+            "overall_attendance": total_attendance,
+            "monthly_attendance": chart_data,
+        }
+
+        return Response(response_data)
+
+    
+    
+    
+    
+class LeaveYearlyStatsAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, year=None):
+        # Use current year if no year provided
+        if year is None:
+            year = date.today().year
+
+        # Filter leaves for the given year with status "Approved" (case-insensitive)
+        leaves = Leave.objects.filter(
+            start_date__year=year,
+            status__iexact="Approved"
+        )
+
+        # Annotate month-wise count based on start_date
+        monthly_data = (
+            leaves.annotate(month=ExtractMonth("start_date"))
+            .values("month")
+            .annotate(count=Count("id"))
+            .order_by("month")
+        )
+
+        # Format data for chart (Jan–Dec)
+        chart_data = []
+        for month_num in range(1, 13):
+            month_name = calendar.month_abbr[month_num]
+            count = next(
+                (item["count"] for item in monthly_data if item["month"] == month_num),
+                0
+            )
+            chart_data.append({"month": month_name, "count": count})
+
+        # Total approved leave count for the year
+        total_leaves = leaves.count()
+
+        response_data = {
+            "success": True,
+            "year": year,
+            "total_approved_leaves": total_leaves,
+            "monthly_approved_leaves": chart_data,
+        }
+
+        return Response(response_data)
+    
+    
+    
+    
+#  privacy policy add list
+# privacy policy add list
+class  AddListPrivacyPolicyAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        # ✅ Check if a policy already exists
+        if PrivacyPolicy.objects.exists():
+            existing_policy = PrivacyPolicy.objects.latest('created_at')
+            serializer = PrivacyPolicySerializer(existing_policy)
+            return Response({
+                "success": True,
+                "message": "Privacy Policy already exists.Edit the existing one.",
+                "data": serializer.data
+            }, status=status.HTTP_200_OK)
+
+        # ✅ Otherwise, create a new one
+        serializer = PrivacyPolicySerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response({
+                "success": True,
+                "message": "Privacy Policy created successfully",
+                "data": serializer.data
+            }, status=status.HTTP_201_CREATED)
+
+        return Response({
+            "success": False,
+            "errors": serializer.errors
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+    def get(self, request):
+        policies = PrivacyPolicy.objects.all().order_by('-created_at')
+        serializer = PrivacyPolicySerializer(policies, many=True)
+        return Response({
+            "success": True,
+            "message": "Privacy Policies fetched successfully",
+            "data": serializer.data
+        })
+    
+
+#privacy policy edit api
+class PrivacyPolicyEditAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, pk):
+        policy = get_object_or_404(PrivacyPolicy, pk=pk)
+        serializer = PrivacyPolicySerializer(policy, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response({
+                "success": True,
+                "message": "Privacy Policy updated successfully",
+                "data": serializer.data
+            })
+        return Response({
+            "success": False,
+            "errors": serializer.errors
+        }, status=status.HTTP_400_BAD_REQUEST)    
         
         
         
 
+        
+# Terms and conditions sessions        
+        
+class AddListTermsAndConditionsAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        """
+        Create a new Terms and Conditions entry if not exists,
+        otherwise return the existing one instead of creating duplicates.
+        """
+        # Check if a Terms and Conditions entry already exists
+        existing_terms = TermsAndConditions.objects.first()
+        if existing_terms:
+            serializer = TermsAndConditionsSerializer(existing_terms)
+            return Response({
+                "success": True,
+                "message": "Terms and Conditions entry already exists. Edit the existing one.",
+                "data": serializer.data
+            }, status=status.HTTP_200_OK)
+
+        # If no entry exists, create a new one
+        serializer = TermsAndConditionsSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response({
+                "success": True,
+                "message": "Terms and Conditions created successfully",
+                "data": serializer.data
+            }, status=status.HTTP_201_CREATED)
+
+        return Response({
+            "success": False,
+            "errors": serializer.errors
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+    def get(self, request):
+        """
+        List all Terms and Conditions entries, ordered by latest created.
+        """
+        terms = TermsAndConditions.objects.all().order_by('-created_at')
+        serializer = TermsAndConditionsSerializer(terms, many=True)
+        return Response({
+            "success": True,
+            "message": "Terms and Conditions fetched successfully",
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
+        
+        
+        
+class TermsAndConditionsEditAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, pk):
+        # Get the Terms and Conditions object or return 404
+        terms = get_object_or_404(TermsAndConditions, pk=pk)
+        
+        # Partial update serializer
+        serializer = TermsAndConditionsSerializer(terms, data=request.data, partial=True)
+        
+        if serializer.is_valid():
+            serializer.save()
+            return Response({
+                "success": True,
+                "message": "Terms and Conditions updated successfully",
+                "data": serializer.data
+            })
+        
+        return Response({
+            "success": False,
+            "errors": serializer.errors
+        }, status=status.HTTP_400_BAD_REQUEST)    
+        
+        
+        
+        
+# about us
+
+class AddListAboutUsAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        """
+        Create a new About Us entry if not exists, otherwise return the existing one.
+        """
+        # If an About Us entry already exists, return it instead of creating a new one
+        existing_about = AboutUs.objects.first()
+        if existing_about:
+            serializer = AboutsessionSerializer(existing_about)
+            return Response({
+                "success": True,
+                "message": "About Us entry already exists. Edit the existing one.",
+                "data": serializer.data
+            }, status=status.HTTP_200_OK)
+
+        # If no entry exists, create a new one
+        serializer = AboutsessionSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response({
+                "success": True,
+                "message": "About Us created successfully",
+                "data": serializer.data
+            }, status=status.HTTP_201_CREATED)
+
+        return Response({
+            "success": False,
+            "errors": serializer.errors
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+    def get(self, request):
+        """
+        List all About Us entries, ordered by latest updated.
+        """
+        about_us_entries = AboutUs.objects.all().order_by('-updated_at')
+        serializer = AboutsessionSerializer(about_us_entries, many=True)
+        return Response({
+            "success": True,
+            "message": "About Us entries fetched successfully",
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
+        
+        
+        
+        
+class AboutUsEditAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, pk):
+        # Get the About Us object or return 404
+        about = get_object_or_404(AboutUs, pk=pk)
+        
+        # Partial update serializer
+        serializer = AboutsessionSerializer(about, data=request.data, partial=True)
+        
+        if serializer.is_valid():
+            serializer.save()
+            return Response({
+                "success": True,
+                "message": "About Us updated successfully",
+                "data": serializer.data
+            })
+        
+        return Response({
+            "success": False,
+            "errors": serializer.errors
+        }, status=status.HTTP_400_BAD_REQUEST)    
+        
+        
+        
+                             
+        

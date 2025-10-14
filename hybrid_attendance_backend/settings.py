@@ -92,6 +92,7 @@ DATABASES = {
         'PASSWORD': os.getenv('POSTGRES_PASSWORD', 'root'),
         'HOST': os.getenv('POSTGRES_HOST', 'localhost'),
         'PORT': os.getenv('POSTGRES_PORT', '5432'),
+         "CONN_MAX_AGE": 60,  # 1 minute (or use 0 for auto-close)
     }
 }
 
@@ -99,9 +100,10 @@ EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST = 'smtp.gmail.com'
 EMAIL_PORT = 587
 EMAIL_USE_TLS = True
-EMAIL_HOST_USER = 'anoopk496820@gmail.com'
-EMAIL_HOST_PASSWORD = 'ubeq bgif iziv zcyc'  # App password
+EMAIL_HOST_USER = 'cindasibichan2002@gmail.com'
+EMAIL_HOST_PASSWORD = 'yjlu olka sipt dvej'  # App password
 DEFAULT_FROM_EMAIL = EMAIL_HOST_USER  # <-- Use an App Password, not your Gmail login
+
 
 # Password validation
 AUTH_PASSWORD_VALIDATORS = [
@@ -136,10 +138,13 @@ CORS_ALLOWED_ORIGINS = [
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
+        
     ),
     'DEFAULT_PERMISSION_CLASSES': (
         'rest_framework.permissions.IsAuthenticated',
     ),
+    
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
 }
 
 # JWT Settings
