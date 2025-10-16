@@ -37,6 +37,9 @@ class BankDetailSerializer(serializers.ModelSerializer):
 # -----------------------------
 # Employee Serializer
 # -----------------------------
+# -----------------------------
+# Employee Serializer
+# -----------------------------
 class EmployeeSerializer(serializers.ModelSerializer):
     # CamelCase mapping
     firstName = serializers.CharField(source="first_name")
@@ -69,6 +72,7 @@ class EmployeeSerializer(serializers.ModelSerializer):
         required=False
     )
 
+
     # Profile picture
     profile_pic = serializers.ImageField(required=False)
 
@@ -78,11 +82,11 @@ class EmployeeSerializer(serializers.ModelSerializer):
             "id", "firstName", "lastName", "employeeId",
             "department", "designation", "repMgrTl", "is_team_lead",
             "salary", "email", "password", "confirmPassword",
-            "profile_pic", "phone", "address", "dob","user_type",
-            "gender", "nationality", "blood_group","job_type", "emergency_contact",
+            "profile_pic", "phone", "address", "dob","user_type","job_type",
+            "gender", "nationality", "blood_group", "emergency_contact",
             # Bank fields
             "accountNumber", "confirmAccountNumber", "ifscCode",
-            "branchName", "accountHolderName", "documents",
+            "branchName", "accountHolderName", "documents","company_branch",
         ]
 
     def validate(self, data):
@@ -110,13 +114,20 @@ class EmployeeSerializer(serializers.ModelSerializer):
         if profile_pic_file:
             validated_data["profile_pic"] = profile_pic_file
 
+        # Determine role based on user_type
+        user_type = validated_data.get("user_type", "").strip().lower()
+        if user_type in ["admin management", "admin team lead","team lead"]:
+            user_role = "admin"
+        else:
+            user_role = "employee"    
+
         # Create User
         user = User.objects.create(
             email=email,
-            role="employee",
+            role=user_role,
             password=make_password(raw_password),
             first_name=validated_data.get("first_name", ""),
-            last_name=validated_data.get("last_name", ""),
+            last_name=validated_data.get("last_name", ""),   
         )
 
         # Create EmployeeDetail

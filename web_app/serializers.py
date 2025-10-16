@@ -743,7 +743,65 @@ class TermsAndConditionsSerializer(serializers.ModelSerializer):
 class AboutsessionSerializer(serializers.ModelSerializer):
     class Meta:
         model = AboutUs
-        fields = '__all__'              
+        fields = '__all__'   
+        
+        
+        
+        
+class LeavediagramSerializer(serializers.ModelSerializer):
+    employee_first_name = serializers.CharField(source='employee.first_name', read_only=True)
+    employee_last_name = serializers.CharField(source='employee.last_name', read_only=True)
+
+    is_team_lead_status = serializers.SerializerMethodField()
+    is_project_leader_status = serializers.SerializerMethodField()
+    is_hr_status = serializers.SerializerMethodField()
+    is_ceo_status = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Leave
+        fields = [
+            'id',
+            'employee_first_name',
+            'employee_last_name',
+            'leave_type',
+            'start_date',
+            'end_date',
+            'status',
+            'is_team_lead_status',
+            'is_project_leader_status',
+            'is_hr_status',
+            'is_ceo_status',
+        ]
+
+    # ✅ Status helpers (Approved / Rejected / Pending)
+    def get_is_team_lead_status(self, obj):
+        if obj.is_team_lead_rejected:
+            return "Rejected"
+        elif obj.is_team_lead_approved:
+            return "Approved"
+        return "Pending"
+
+    def get_is_project_leader_status(self, obj):
+        if obj.is_project_leader_rejected:
+            return "Rejected"
+        elif obj.is_project_leader_approved:
+            return "Approved"
+        return "Pending"
+
+    def get_is_hr_status(self, obj):
+        if obj.is_hr_rejected:
+            return "Rejected"
+        elif obj.is_hr_approved:
+            return "Approved"
+        return "Pending"
+
+    def get_is_ceo_status(self, obj):
+        if obj.is_ceo_rejected:
+            return "Rejected"
+        elif obj.is_ceo_approved:
+            return "Approved"
+        return "Pending"
+                 
             
     
 

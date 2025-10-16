@@ -54,8 +54,8 @@ urlpatterns = [
 
 
   path('employee-attendance/', EmployeeAttendanceView.as_view(), name='employee-attendance'),
-    path('daily-punch-summary/', DailyPunchSessionSummaryView.as_view(), name='daily-punch-summary'),
-    path('employee-all-attendance-details/', EmployeeAllAttendanceDetailsView.as_view(), name='employee-all-attendance-details'),
+  path('daily-punch-summary/', DailyPunchSessionSummaryView.as_view(), name='daily-punch-summary'),
+  path('employee-all-attendance-details/', EmployeeAllAttendanceDetailsView.as_view(), name='employee-all-attendance-details'),
   path('overview-counts-api/', EmployeePresenceAbsenceLeaveCountView.as_view(), name='overview-counts-api'),
  path('dashboard-leave-counts/',DashboardLeaveDetailsCountAPI.as_view(),name='dashboard-leave-counts'),
  path('attendance-report/', AttendanceReportView.as_view(), name='attendance-report'),
@@ -69,6 +69,7 @@ urlpatterns = [
    path('list-all-leaves/',LeaveListAPIView.as_view(),name='list-all-leaves'),
     
     path("logout/", LogoutView.as_view(), name="logout"),
+    path('refresh-token/',RefreshTokenView.as_view(),name='refresh-token'),         
     
     
     

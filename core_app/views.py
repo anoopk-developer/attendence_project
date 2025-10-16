@@ -2286,3 +2286,67 @@ class NotificationStatusView(APIView):
             "message": "Notifications fetched successfully",
             "data": data
         })
+        
+        
+        
+        
+class RefreshTokenView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request, *args, **kwargs):
+        refresh_token = request.data.get("refresh")
+
+        if not refresh_token:
+            return Response(
+                {"success": False, "message": "Refresh token is required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            # Verify & decode refresh token
+            old_refresh = RefreshToken(refresh_token)
+            user_id = old_refresh.get("user_id")
+
+            # Fetch user
+            try:
+                user = User.objects.get(id=user_id)
+            except User.DoesNotExist:
+                return Response(
+                    {"success": False, "message": "User not found"},
+                    status=status.HTTP_401_UNAUTHORIZED,
+                )
+            
+            if not user.is_active:
+                return Response(
+                    {
+                        "success": False,
+                        "message": "User account is inactive. Token refresh not allowed.",
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+            # Issue new refresh + access
+            new_refresh = RefreshToken.for_user(user)
+            new_refresh["role"] = user.role
+            new_refresh["user_id"] = user.id
+
+            return Response(
+                {
+                    "success": True,
+                    "message": "Token refreshed successfully",
+                    "access": str(new_refresh.access_token),
+                    "refresh": str(new_refresh),
+                    "user": {
+                        "id": user.id,
+                        "email": user.email,
+                        "role": user.role,
+                    },
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        except TokenError:
+            return Response(
+                {"success": False, "message": "Invalid or expired refresh token"},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )        

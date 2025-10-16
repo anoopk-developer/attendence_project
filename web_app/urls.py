@@ -85,6 +85,8 @@ path('terms-and-conditions/', AddListTermsAndConditionsAPIView.as_view(), name='
 path('terms-and-conditionsedit/<int:pk>/', TermsAndConditionsEditAPIView.as_view(), name='terms-and-conditions-edit'),
 path('about-us-add-list/', AddListAboutUsAPIView.as_view(), name='about-us-add-list'),
 path('about-usedit/<int:pk>/', AboutUsEditAPIView.as_view(), name='about-us-edit'),
+path('leavediagram/<int:pk>/', LeavediagramAPIView.as_view(), name='leavediagram'),
+
 
 
  # Weekly total hours

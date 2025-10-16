@@ -456,6 +456,10 @@ class Leave(models.Model):
     is_hr_approved = models.BooleanField(default=False)
     is_ceo_approved = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True, null=True)  # ✅ automatically saves apply time
+    is_team_lead_rejected = models.BooleanField(default=False)
+    is_project_leader_rejected = models.BooleanField(default=False)
+    is_hr_rejected = models.BooleanField(default=False)
+    is_ceo_rejected = models.BooleanField(default=False)
 
 
 # ---------------------------

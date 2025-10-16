@@ -38,6 +38,7 @@ from core_app.models import *
 from core_app.serializers import *
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 import json
+from rest_framework import status, permissions 
 
 
 
@@ -195,46 +196,52 @@ class LeaveAcceptAPI(APIView):
 
         leave = get_object_or_404(Leave, id=leave_id)
 
-        # ✅ Prevent re-approval or re-rejection
-        if leave.status != "Pending":
-            return Response(
-                {"success": False, "message": f"Leave already {leave.status.lower()}"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        # Prevent re-approval or re-rejection
+        # if leave.status != "Pending":
+        #     return Response(
+        #         {"success": False, "message": f"Leave already {leave.status.lower()}"},
+        #         status=status.HTTP_400_BAD_REQUEST,
+        #     )
 
         approver = request.user
         employee_profile = getattr(approver, "employee_profile", None)
         approver_role = getattr(approver, "role", None)
         approver_type = getattr(employee_profile, "user_type", None)
-
-        # ✅ Convert to lowercase for case-insensitive comparison
         approver_type_lower = approver_type.lower() if approver_type else ""
 
-        # ✅ Mark approval fields based on approver role/type
-        if approver_role in ["admin", "superadmin"]:
-            leave.is_team_lead_approved = True
-            leave.is_project_leader_approved = True
-            leave.is_hr_approved = True
-            leave.is_ceo_approved = True
+        # ✅ Mark approval fields and reset corresponding rejection flags
+        # if approver_role in ["admin", "superadmin"]:
+        #     leave.is_team_lead_approved = True
+        #     leave.is_project_leader_approved = True
+        #     leave.is_hr_approved = True
+        #     leave.is_ceo_approved = True
+        #     leave.is_team_lead_rejected = False
+        #     leave.is_project_leader_rejected = False
+        #     leave.is_hr_rejected = False
+        #     leave.is_ceo_rejected = False
 
-        elif approver_type_lower == "team lead":
+        if approver_type_lower == "team lead":
             leave.is_team_lead_approved = True
+            leave.is_team_lead_rejected = False
 
         elif approver_type_lower == "project lead":
             leave.is_project_leader_approved = True
+            leave.is_project_leader_rejected = False
 
         elif approver_type_lower == "hr":
             leave.is_hr_approved = True
+            leave.is_hr_rejected = False
 
         elif approver_type_lower == "ceo":
             leave.is_ceo_approved = True
+            leave.is_ceo_rejected = False
 
         # ✅ Overall leave becomes Approved
         leave.status = "Approved"
         leave.approved_by = approver
         leave.save()
 
-        # 📨 Notify the employee
+        # 📨 Notify employee
         if leave.user:
             NotificationLog.objects.create(
                 user=leave.user,
@@ -250,12 +257,12 @@ class LeaveAcceptAPI(APIView):
             {
                 "success": True,
                 "message": (
-                    f"Leave approved successfully by {approver_type or approver_role or approver.email}"
+                    f"Leave approved successfully by "
+                    f"{approver_type or approver_role or approver.email}"
                 ),
             },
             status=status.HTTP_200_OK,
         )
-
 
 class LeaveRejectAPI(APIView):
     permission_classes = [IsAuthenticated]
@@ -272,32 +279,72 @@ class LeaveRejectAPI(APIView):
 
         leave = get_object_or_404(Leave, id=leave_id)
 
-        if leave.status != "Pending":
-            return Response(
-                {"success": False, "message": f"Leave already {leave.status.lower()}"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        rejector = request.user
+        employee_profile = getattr(rejector, "employee_profile", None)
+        rejector_role = getattr(rejector, "role", None)
+        rejector_type = getattr(employee_profile, "user_type", None)
+        rejector_type_lower = rejector_type.lower() if rejector_type else ""
 
+        # ✅ Handle rejection logic dynamically
+        # if rejector_role in ["admin", "superadmin"]:
+        #     leave.is_team_lead_rejected = True
+        #     leave.is_project_leader_rejected = True
+        #     leave.is_hr_rejected = True
+        #     leave.is_ceo_rejected = True
+
+        #     # reset approvals
+        #     leave.is_team_lead_approved = False
+        #     leave.is_project_leader_approved = False
+        #     leave.is_hr_approved = False
+        #     leave.is_ceo_approved = False
+
+        if rejector_type_lower == "team lead":
+            leave.is_team_lead_rejected = True
+            leave.is_team_lead_approved = False
+
+        elif rejector_type_lower == "project lead":
+            leave.is_project_leader_rejected = True
+            leave.is_project_leader_approved = False
+
+        elif rejector_type_lower == "hr":
+            leave.is_hr_rejected = True
+            leave.is_hr_approved = False
+
+        elif rejector_type_lower == "ceo":
+            leave.is_ceo_rejected = True
+            leave.is_ceo_approved = False
+
+        # ✅ Always set status to Rejected even if previously approved
         leave.status = "Rejected"
-        leave.approved_by = request.user
+        leave.approved_by = rejector
         if rejection_reason:
-            leave.rejection_reason = rejection_reason  # overwrite rejection reason if provided
+            leave.rejection_reason = rejection_reason
         leave.save()
 
-        # Send notification to the employee who applied for leave
+        # 📨 Notify the employee
         if leave.user:
-            notification_message = f"Your leave request for {leave.leave_type} from {leave.start_date} to {leave.end_date} has been rejected by {request.user.email}"
+            notification_message = (
+                f"Your leave request for {leave.leave_type} "
+                f"({leave.start_date} to {leave.end_date}) "
+                f"has been rejected by {rejector.email}"
+            )
             if rejection_reason:
                 notification_message += f". Reason: {rejection_reason}"
-            
+
             NotificationLog.objects.create(
                 user=leave.user,
+                title="Leave Rejected",
                 action=notification_message,
-                title = "Leave Rejected"
             )
 
         return Response(
-            {"success": True, "message": "Leave request rejected successfully"},
+            {
+                "success": True,
+                "message": (
+                    f"Leave rejected successfully by "
+                    f"{rejector_type or rejector_role or rejector.email}"
+                ),
+            },
             status=status.HTTP_200_OK,
         )
 
@@ -2731,7 +2778,7 @@ class AddListAboutUsAPIView(APIView):
             serializer = AboutsessionSerializer(existing_about)
             return Response({
                 "success": True,
-                "message": "About Us entry already exists. Edit the existing one.",
+                "messagye": "About Us entry already exists. Edit the existing one.",
                 "data": serializer.data
             }, status=status.HTTP_200_OK)
 
@@ -2790,5 +2837,21 @@ class AboutUsEditAPIView(APIView):
         
         
         
-                             
         
+      
+class LeavediagramAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, pk):
+        leave = get_object_or_404(Leave, pk=pk)
+        serializer = LeavediagramSerializer(leave)
+        return Response({
+            "success": True,
+            "message": "Leave details retrieved successfully",
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
+        
+        
+        
+                             
+       
