@@ -39,6 +39,13 @@ from core_app.serializers import *
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 import json
 from rest_framework import status, permissions 
+from datetime import date, timedelta
+from django.db.models import Q
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+from datetime import datetime, date
+
 
 
 
@@ -384,7 +391,7 @@ class TeamLeaderListAPIView(APIView):
     permission_classes = [IsAuthenticated]  # Allows public access
 
     def get(self, request):
-        team_leaders = EmployeeDetail.objects.filter(user_type="Teamleader", )
+        team_leaders = EmployeeDetail.objects.filter(user_type__exact="Team leader", )
         serializer = FilterNameSerializer(team_leaders, many=True)
         return Response(
             {
@@ -400,7 +407,7 @@ class ProjectmanagerListAPIView(APIView):
     permission_classes = [IsAuthenticated]  # Public access
 
     def get(self, request):
-        project_managers = EmployeeDetail.objects.filter(user_type="Project Manager")
+        project_managers = EmployeeDetail.objects.filter(user_type__exact="Project Manager")
         serializer = ProjectManagerNameSerializer(project_managers, many=True)
         return Response(
             {
@@ -526,11 +533,7 @@ class TomorrowBirthdayAPIView(APIView):
 
 
 #employees upcoming birthday comming 7 month
-from datetime import date, timedelta
-from django.db.models import Q
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework import status
+
 
 
 class UpcomingBirthdayAPIView(APIView):
@@ -630,7 +633,7 @@ class EmployeeListadminView(APIView):
             "data": serializer.data
         })
         
-        
+            
         
  # ADMIN Filter employee designation wise list       
 class EmployeeListAdminFilteredView(APIView):
@@ -692,49 +695,85 @@ class EmployeeCountByDesignation(APIView):
 
 # todays attendance count 
 # todays attendance count  all employees
-class TodaysAttendanceCount(APIView):
-    permission_classes = [IsAuthenticated]
-
+# all employees daily checkin checkout details
+class AllTodaysEmployeeCheckinCheckOutDetails(APIView):
+    permission_classes = [IsAuthenticated] 
     def get(self, request):
-        today = timezone.localdate()
+        today = date.today()
 
-        # Get each employee's first punch-in record for today
-        first_punches = (
+        # Aggregate per employee: earliest in, latest out
+        qs = (
             Attendance.objects.filter(date=today)
-            .values("employee")
-            .annotate(first_in=Min("in_time"))
+            .values("employee_id", "employee__first_name")
+            .annotate(
+                first_in=Min("in_time"),
+                last_out=Max("out_time")
+            )
+            .order_by("employee__first_name")
         )
 
-        present_count = 0
-        late_count = 0
+        data = []
+        cutoff_time = time(9, 40)  # 09:40 AM cutoff
 
-        for record in first_punches:
+        for record in qs:
             first_in = record["first_in"]
+            last_out = record["last_out"]
+
+            # -------------------
+            # Late check
+            # -------------------
+            is_late = False
+            late_duration = "00 h 00 m"
+
             if first_in:
-                # Convert to local time if timezone-aware
-                local_in_time = timezone.localtime(first_in)
-                punch_time = local_in_time.time()
+                # Convert to local timezone
+                first_in_local = first_in.astimezone()
+                first_in_clock = first_in_local.time()
 
-                # ✅ Compare correctly
-                if punch_time <= time(9, 40):
-                    present_count += 1
+                # Calculate late duration in seconds
+                delta_seconds = (
+                    first_in_clock.hour * 3600 + first_in_clock.minute * 60 + first_in_clock.second
+                    - cutoff_time.hour * 3600 - cutoff_time.minute * 60
+                )
+
+                if delta_seconds > 0:
+                    is_late = True
+                    hours, remainder = divmod(delta_seconds, 3600)
+                    minutes, _ = divmod(remainder, 60)
+                    late_duration = f"{hours:02d} h {minutes:02d} m"
                 else:
-                    late_count += 1
+                    is_late = False
+                    late_duration = "00 h 00 m"
 
-        # Leave count (unique employees on leave today)
-        leave_count = Leave.objects.filter(
-            start_date__lte=today,
-            end_date__gte=today,
-            status="Approved"
-        ).values("employee").distinct().count()
+            # -------------------
+            # Production hours
+            # -------------------
+            production_hours = "00:00:00"
+            if first_in and last_out:
+                delta = last_out - first_in
+                total_seconds = int(delta.total_seconds())
+                hours, remainder = divmod(total_seconds, 3600)
+                minutes, seconds = divmod(remainder, 60)
+                production_hours = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+            data.append({
+                "employee_id": record["employee_id"],
+                "employee_name": record["employee__first_name"],
+                "date": str(today),
+                "in_time": first_in.astimezone().strftime("%H:%M:%S") if first_in else None,
+                "out_time": last_out.astimezone().strftime("%H:%M:%S") if last_out else None,
+                "late": is_late,
+                "late_duration": late_duration,
+                "production_hours": production_hours,
+            })
 
         return Response({
             "success": True,
-            "date": today,
-            "present_count": present_count,
-            "late_count": late_count,
-            "leave_count": leave_count
-        })        
+            "message": "Employee attendance details listed successfully",
+            "date": str(today),
+            "total_records": len(data),
+            "data": data
+        })       
         
 from rest_framework.views import APIView
 from django.shortcuts import get_object_or_404  
@@ -2853,5 +2892,328 @@ class LeavediagramAPIView(APIView):
         
         
         
+
+class ActiveEmployeeCountView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        active_employee_count = EmployeeDetail.objects.filter(user__is_active=True).count()
+        return Response({
+            "status": True,
+            "message": "Active employee count fetched successfully",
+            "active_employee_count": active_employee_count
+        })    
+   
+   
+   
+   
+   
+        
+# --------------------------all birthday status---------------------
+
+
+
+       
+class BirthdayListAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        today = date.today()
+        tomorrow = today + timedelta(days=1)
+        six_months_later = today + timedelta(days=183)  # ≈ 6 months
+
+        # --- TODAY ---
+        today_birthdays = EmployeeDetail.objects.filter(
+            dob__month=today.month,
+            dob__day=today.day
+        )
+
+        # --- TOMORROW ---
+        tomorrow_birthdays = EmployeeDetail.objects.filter(
+            dob__month=tomorrow.month,
+            dob__day=tomorrow.day
+        )
+
+        # --- UPCOMING (next 6 months) ---
+        today_month, today_day = today.month, today.day
+        end_month, end_day = six_months_later.month, six_months_later.day
+
+        if today_month <= end_month:
+            upcoming_birthdays = EmployeeDetail.objects.filter(
+                Q(dob__month__gt=today_month, dob__month__lt=end_month) |
+                Q(dob__month=today_month, dob__day__gte=today_day) |
+                Q(dob__month=end_month, dob__day__lte=end_day)
+            )
+        else:
+            # Year wrap-around (e.g. Oct → Mar)
+            upcoming_birthdays = EmployeeDetail.objects.filter(
+                Q(dob__month__gt=today_month) |
+                Q(dob__month__lt=end_month) |
+                Q(dob__month=today_month, dob__day__gte=today_day) |
+                Q(dob__month=end_month, dob__day__lte=end_day)
+            )
+
+        # Serialize all data
+        today_data = EmployeebirthdaySerializer(today_birthdays, many=True).data
+        tomorrow_data = EmployeebirthdaySerializer(tomorrow_birthdays, many=True).data
+        upcoming_data = EmployeebirthdaySerializer(upcoming_birthdays, many=True).data
+
+        # Response format
+        return Response({
+            "success": True,
+            "message": "Birthday data fetched successfully",
+            "today_birthdays": today_data if today_data else [],
+            "tomorrow_birthdays": tomorrow_data if tomorrow_data else [],
+            "upcoming_birthdays": upcoming_data if upcoming_data else [],
+         
+        }, status=status.HTTP_200_OK)   
+        
+        
+        
+# create department api
+class DepartmentCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = DepartmentSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response({
+                "success": True,
+                "message": "Department created successfully",
+                "data": serializer.data
+            }, status=status.HTTP_201_CREATED)
+        return Response({
+            "success": False,
+            "errors": serializer.errors
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+# create designation api
+class DesignationCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = DesignationSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response({
+                "success": True,
+                "message": "Designation created successfully",
+                "data": serializer.data
+            }, status=status.HTTP_201_CREATED)
+        return Response({
+            "success": False,
+            "errors": serializer.errors
+        }, status=status.HTTP_400_BAD_REQUEST) 
+
+
+
+# list all departments
+class DepartmentListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        departments = Department.objects.all()
+        serializer = DepartmentSerializer(departments, many=True)
+        return Response({
+            "success": True,
+            "message": "Departments fetched successfully",
+            "data": serializer.data
+        })
+
+# list all designations
+class DesignationListView(APIView): 
+    permission_classes =[IsAuthenticated]
+    def get(self, request):
+        designations = Designation.objects.all()
+        serializer = DesignationSerializer(designations, many=True)
+        return Response({
+            "success": True,
+            "message": "Designations fetched successfully",
+            "data": serializer.data
+        })    
+        
+        
+        
+# all employees daily checkin checkout details
+class AllTodaysEmployeeCheckinCheckOutDetails(APIView):
+    permission_classes = [IsAuthenticated] 
+    def get(self, request):
+        today = date.today()
+
+        # Aggregate per employee: earliest in, latest out
+        qs = (
+            Attendance.objects.filter(date=today)
+            .values("employee_id", "employee__first_name")
+            .annotate(
+                first_in=Min("in_time"),
+                last_out=Max("out_time")
+            )
+            .order_by("employee__first_name")
+        )
+
+        data = []
+        cutoff_time = time(9, 40)  # 09:40 AM cutoff
+
+        for record in qs:
+            first_in = record["first_in"]
+            last_out = record["last_out"]
+
+            # -------------------
+            # Late check
+            # -------------------
+            is_late = False
+            late_duration = "00 h 00 m"
+
+            if first_in:
+                # Convert to local timezone
+                first_in_local = first_in.astimezone()
+                first_in_clock = first_in_local.time()
+
+                # Calculate late duration in seconds
+                delta_seconds = (
+                    first_in_clock.hour * 3600 + first_in_clock.minute * 60 + first_in_clock.second
+                    - cutoff_time.hour * 3600 - cutoff_time.minute * 60
+                )
+
+                if delta_seconds > 0:
+                    is_late = True
+                    hours, remainder = divmod(delta_seconds, 3600)
+                    minutes, _ = divmod(remainder, 60)
+                    late_duration = f"{hours:02d} h {minutes:02d} m"
+                else:
+                    is_late = False
+                    late_duration = "00 h 00 m"
+
+            # -------------------
+            # Production hours
+            # -------------------
+            production_hours = "00:00:00"
+            if first_in and last_out:
+                delta = last_out - first_in
+                total_seconds = int(delta.total_seconds())
+                hours, remainder = divmod(total_seconds, 3600)
+                minutes, seconds = divmod(remainder, 60)
+                production_hours = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+            data.append({
+                "employee_id": record["employee_id"],
+                "employee_name": record["employee__first_name"],
+                "date": str(today),
+                "in_time": first_in.astimezone().strftime("%H:%M:%S") if first_in else None,
+                "out_time": last_out.astimezone().strftime("%H:%M:%S") if last_out else None,
+                "late": is_late,
+                "late_duration": late_duration,
+                "production_hours": production_hours,
+            })
+
+        return Response({
+            "success": True,
+            "message": "Employee attendance details listed successfully",
+            "date": str(today),
+            "total_records": len(data),
+            "data": data
+        })   
+        
+        
+# todays attendance count  all employees
+class TodaysAttendanceCount(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        today = timezone.localdate()
+
+        # Get each employee's first punch-in record for today
+        first_punches = (
+            Attendance.objects.filter(date=today)
+            .values("employee")
+            .annotate(first_in=Min("in_time"))
+        )
+
+        present_count = 0
+        late_count = 0
+
+        for record in first_punches:
+            first_in = record["first_in"]
+            if first_in:
+                # Convert to local time if timezone-aware
+                local_in_time = timezone.localtime(first_in)
+                punch_time = local_in_time.time()
+
+                # ✅ Compare correctly
+                if punch_time <= time(9, 40):
+                    present_count += 1
+                else:
+                    late_count += 1
+
+        # Leave count (unique employees on leave today)
+        leave_count = Leave.objects.filter(
+            start_date__lte=today,
+            end_date__gte=today,
+            status="Approved"
+        ).values("employee").distinct().count()
+ 
+        total_employee_count = EmployeeDetail.objects.filter(user__is_active=True).count()
+
+        return Response({
+            "success": True,
+            "date": today,
+            "total_employee_count":total_employee_count,
+            "present_count": present_count,
+            "late_count": late_count,
+            "leave_count": leave_count
+        })  
+        
+        
+# list all project new api after adding all required fields
+class NewListProjectsApi(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        projects = Project.objects.all().order_by("-id")
+        serializer = NewProjectReadSerializer(
+            projects, many=True, context={"request": request}
+        )
+        return Response({
+            "success": True,
+            "message": "Projects listed successfully",
+            "projects": serializer.data
+        }, status=status.HTTP_200_OK)
+
+
+        
+        
+class TeamLeaderSearchListAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        """
+        API to list team leaders filtered by first or last name starting with a given letter.
+        You can use either:
+            /api/team-leaders-search/A/
+        or
+            /api/team-leaders-search/?letter=A
+        """
+        # Get letter from URL kwarg or query param
+        letter = kwargs.get("letter") or request.GET.get("letter")
+
+        # Base queryset for team leaders
+        queryset = EmployeeDetail.objects.filter(user_type__iexact="Team Leader")
+
+        # Filter by first or last name starting with the letter
+        if letter:
+            queryset = queryset.filter(
+                Q(first_name__istartswith=letter) | Q(last_name__istartswith=letter)
+            )
+
+        queryset = queryset.order_by("first_name")
+        serializer = TeamLeaderSearchSerializer(queryset, many=True)
+
+        return Response({
+            "message": "Team Leader list fetched successfully",
+            "count": queryset.count(),
+            "team_leaders": serializer.data
+        }, status=status.HTTP_200_OK)
+
                              
        

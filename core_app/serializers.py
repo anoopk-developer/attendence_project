@@ -40,6 +40,9 @@ class BankDetailSerializer(serializers.ModelSerializer):
 # -----------------------------
 # Employee Serializer
 # -----------------------------
+# -----------------------------
+# Employee Serializer
+# -----------------------------
 class EmployeeSerializer(serializers.ModelSerializer):
     # CamelCase mapping
     firstName = serializers.CharField(source="first_name")
@@ -98,7 +101,9 @@ class EmployeeSerializer(serializers.ModelSerializer):
         return data
 
     def create(self, validated_data):
-        # Pull out non-model fields
+        request = self.context.get("request")
+        logged_in_user = request.user if request else None
+
         validated_data.pop("confirmPassword", None)
         raw_password = validated_data.pop("password")
         email = validated_data.pop("email")
@@ -114,20 +119,28 @@ class EmployeeSerializer(serializers.ModelSerializer):
         if profile_pic_file:
             validated_data["profile_pic"] = profile_pic_file
 
-        # Determine role based on user_type
+        # ---------------------------------
+        # Determine role based on conditions
+        # ---------------------------------
         user_type = validated_data.get("user_type", "").strip().lower()
-        if user_type in ["admin management", "admin team lead","team lead"]:
+
+        if logged_in_user and logged_in_user.role == "superadmin":
+            user_role = "admin"  # ✅ Superadmin creates admins
+            # Assign company_branch from data if provided
+            company_branch = validated_data.get("company_branch")
+            validated_data["company_branch"] = company_branch
+        elif user_type in ["admin management", "admin team lead", "team lead", "team leader"]:
             user_role = "admin"
         else:
-            user_role = "employee"    
+            user_role = "employee"
 
-        # Create User
+        # Create linked User
         user = User.objects.create(
             email=email,
             role=user_role,
             password=make_password(raw_password),
             first_name=validated_data.get("first_name", ""),
-            last_name=validated_data.get("last_name", ""),   
+            last_name=validated_data.get("last_name", "")
         )
 
         # Create EmployeeDetail
@@ -142,12 +155,15 @@ class EmployeeSerializer(serializers.ModelSerializer):
                 branch_name=branch_name,
                 account_holder=account_holder,
             )
-            # Save uploaded documents
             for doc in documents_files:
                 bank_detail.documents.save(doc.name, doc, save=True)
 
         return employee
     
+  
+  
+  
+  
     
     
     
@@ -241,12 +257,18 @@ class TaskSerializer(serializers.ModelSerializer):
         model = Task
         fields = ["id","title", "description", "assigned_by", "assigned_to", "status"]
 
+from django.utils.timezone import make_naive
+from django.utils.timezone import now, make_naive
+from rest_framework import serializers
+from .models import Task
 
 class TaskReadSerializer(serializers.ModelSerializer):
     assigned_by_id = serializers.IntegerField(source="assigned_by.id", read_only=True)
     assigned_by_name = serializers.SerializerMethodField()
     assigned_to_id = serializers.IntegerField(source="assigned_to.id", read_only=True)
     assigned_to_name = serializers.SerializerMethodField()
+    task_hours = serializers.SerializerMethodField()           # total hours
+    current_progress = serializers.SerializerMethodField()     # current spent / total hours
 
     class Meta:
         model = Task
@@ -261,6 +283,9 @@ class TaskReadSerializer(serializers.ModelSerializer):
             "assigned_to_name",
             "created_at",
             "updated_at",
+            "due_date",
+            "task_hours",
+            "current_progress",
         ]
 
     def get_assigned_by_name(self, obj):
@@ -268,6 +293,39 @@ class TaskReadSerializer(serializers.ModelSerializer):
 
     def get_assigned_to_name(self, obj):
         return obj.assigned_to.email if obj.assigned_to else None
+
+    def get_task_hours(self, obj):
+        """Total available hours between created_at and due_date."""
+        if obj.created_at and obj.due_date:
+            start = make_naive(obj.created_at)
+            end = make_naive(obj.due_date)
+            delta = end - start
+            return round(delta.total_seconds() / 3600, 2)
+        return None
+
+    def get_current_progress(self, obj):
+        """Fraction value of hours spent so far / total hours."""
+        if obj.created_at and obj.due_date:
+            start = make_naive(obj.created_at)
+            end = make_naive(obj.due_date)
+            total_seconds = (end - start).total_seconds()
+            elapsed_seconds = (make_naive(now()) - start).total_seconds()
+
+            # Avoid negative values or division by zero
+            if total_seconds <= 0:
+                return 0.0
+
+            progress_fraction = elapsed_seconds / total_seconds
+            # Clamp to 1.0 max
+            progress_fraction = max(0.0, min(progress_fraction, 1.0))
+
+            # Return formatted as "x.xx / total_hours"
+            total_hours = round(total_seconds / 3600, 2)
+            current_hours = round(elapsed_seconds / 3600, 2)
+            return f"{current_hours} / {total_hours} hours ({round(progress_fraction*100, 1)}%)"
+
+        return None
+
 
 
 class TaskWithProjectSerializer(serializers.ModelSerializer):
@@ -634,5 +692,274 @@ class NotificationSerializer(serializers.ModelSerializer):
         ]
            
                      
-                     
-                     
+# Project Member Serializer
+# ---------------------------
+class ProjectMembersReadSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProjectMembers
+        fields = ["team_leader", "project_manager", "tags"]
+
+from datetime import datetime, date,time
+from django.utils.timezone import is_aware, make_naive
+
+
+# ---------------------------
+# Task Serializer (limited)
+# ---------------------------
+# ---------------------------
+# Task Serializer (limited)
+# ---------------------------
+# Task Serializer (limited)
+# ---------------------------
+class LimitedTaskSerializer(serializers.ModelSerializer):
+    task_hours = serializers.SerializerMethodField()
+    current_progress = serializers.SerializerMethodField()
+    assigned_employee = serializers.SerializerMethodField()  # ✅ New field
+
+    class Meta:
+        model = Task
+        fields = ["task_hours", "current_progress", "assigned_employee"]
+
+    def _to_datetime(self, dt):
+        """Convert date to datetime and make timezone naive if needed."""
+        if isinstance(dt, date) and not isinstance(dt, datetime):
+            dt = datetime.combine(dt, time.min)  # convert date → datetime
+        if is_aware(dt):
+            dt = make_naive(dt)  # only convert aware → naive
+        return dt
+
+    def get_task_hours(self, obj):
+        """Total available hours between created_at and due_date."""
+        if obj.created_at and obj.due_date:
+            start = self._to_datetime(obj.created_at)
+            end = self._to_datetime(obj.due_date)
+            delta = end - start
+            return round(delta.total_seconds() / 3600, 2)
+        return None
+
+    def get_current_progress(self, obj):
+        """Shows how much time has passed (in hours and percentage)."""
+        if obj.created_at and obj.due_date:
+            start = self._to_datetime(obj.created_at)
+            end = self._to_datetime(obj.due_date)
+
+            total_seconds = (end - start).total_seconds()
+            elapsed_seconds = (self._to_datetime(now()) - start).total_seconds()
+
+            if total_seconds <= 0:
+                return "0 / 0 hours (0%)"
+
+            progress_fraction = elapsed_seconds / total_seconds
+            progress_fraction = max(0.0, min(progress_fraction, 1.0))  # clamp 0–1
+
+            total_hours = round(total_seconds / 3600, 2)
+            current_hours = round(elapsed_seconds / 3600, 2)
+            return f"{current_hours} / {total_hours} hours ({round(progress_fraction * 100, 1)}%)"
+        return None
+
+    def get_assigned_employee(self, obj):
+        """Return assigned employee info."""
+        if not obj.assigned_to:
+            return None
+        try:
+            emp = EmployeeDetail.objects.get(user=obj.assigned_to)
+            request = self.context.get("request")
+            return {
+                "id": emp.id,
+                "user_id": emp.user.id,
+                "name": f"{emp.first_name} {emp.last_name}",
+                "designation": emp.designation,
+                "profile_pic": request.build_absolute_uri(emp.profile_pic.url) if request and emp.profile_pic else None,
+            }
+        except EmployeeDetail.DoesNotExist:
+            return None 
+# ---------------------------
+# Project Members Read Serializer
+# ---------------------------
+class NewProjectMembersReadSerializer(serializers.ModelSerializer):
+    # team_members = serializers.SerializerMethodField()
+    project_manager_details = serializers.SerializerMethodField()
+    team_leader_details = serializers.SerializerMethodField()
+    tags_details = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ProjectMembers
+        fields = [
+            "team_leader_details",
+            "project_manager_details",
+            "tags_details",
+            # "team_members"
+        ]
+
+    # -------------------------------
+    # Helper to get full employee info
+    # -------------------------------
+    def get_employee_info(self, emp_id):
+    # """Return basic employee info (id, name, designation, profile_pic)."""
+      try:
+          emp = EmployeeDetail.objects.get(user=emp_id)
+          request = self.context.get("request")  # safer
+          return {
+              "id": emp.id,
+              "user_id": emp.user.id,
+              "name": f"{emp.first_name} {emp.last_name}",
+              "designation": emp.designation,
+              "profile_pic": request.build_absolute_uri(emp.profile_pic.url) if request and emp.profile_pic else None,
+          }
+      except EmployeeDetail.DoesNotExist:
+          return None
+
+
+    # --------------------------------
+    # Project Manager (Coordinator)
+    # --------------------------------
+    def get_project_manager_details(self, obj):
+        data = obj.project_manager
+        if not data:
+            return None
+
+        if isinstance(data, dict):
+            emp_id = data.get("id")
+        elif isinstance(data, int):
+            emp_id = data
+        else:
+            emp_id = None
+
+        return self.get_employee_info(emp_id)
+
+    # --------------------------------
+    # Team Leader
+    # --------------------------------
+    def get_team_leader_details(self, obj):
+        data = obj.team_leader
+        if not data:
+            return None
+
+        if isinstance(data, dict):
+            emp_id = data.get("id")
+        elif isinstance(data, int):
+            emp_id = data
+        else:
+            emp_id = None
+
+        return self.get_employee_info(emp_id)
+    
+    def get_tags_details(self , obj):
+        data = obj.tags
+        if not data:
+            return None
+        if isinstance(data, dict):
+            emp_id = data.get("id")
+        elif isinstance(data, int):
+            emp_id = data
+        else:
+            emp_id = None
+        return self.get_employee_info(emp_id)    
+
+
+    # --------------------------------
+    # Team Members with assigned tasks
+    # --------------------------------
+    # def get_team_members(self, obj):
+    #     project = obj.project
+    #     members_list = []
+
+    #     # Collect IDs from tags (which store team members)
+    #     tag_data = obj.tags or []
+    #     if not isinstance(tag_data, list):
+    #         return []
+
+    #     for member in tag_data:
+    #         if isinstance(member, dict):
+    #             emp_id = member.get("id")
+    #         elif isinstance(member, int):
+    #             emp_id = member
+    #         else:
+    #             emp_id = None
+
+    #         emp_info = self.get_employee_info(emp_id)
+    #         if emp_info:
+    #             # Find tasks assigned to this employee’s user
+    #             tasks = Task.objects.filter(
+    #                 project=project,
+    #                 assigned_to=emp_info["user"]
+    #             ).values("title", "status")
+
+    #             emp_info["assigned_tasks"] = list(tasks)
+    #             members_list.append(emp_info)
+
+    #     return members_list
+
+
+# ---------------------------
+# Project Serializer (limited)
+# ---------------------------
+class NewProjectReadSerializer(serializers.ModelSerializer):
+    members = NewProjectMembersReadSerializer(source="projectmembers_set", many=True, read_only=True)
+    tasks = serializers.SerializerMethodField()
+    coordinator = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Project
+        fields = [
+            "id",
+            "project_name",
+            "start_date",
+            "end_date",
+            "status",
+            "coordinator",  # ✅ Project Manager
+            "members",       # ✅ Team + Leader
+            "tasks",
+        ]
+
+    def get_coordinator(self, obj):
+        """Fetch project manager from ProjectMembers JSON by ID."""
+        project_member = ProjectMembers.objects.filter(project=obj).first()
+        if project_member:
+            return NewProjectMembersReadSerializer(
+                project_member, context=self.context
+            ).data.get("project_manager_details")
+        return None
+
+    def get_tasks(self, obj):
+        tasks = obj.task_set.all().order_by("-id")
+        return LimitedTaskSerializer(tasks, many=True).data
+    
+class UserSerializer(serializers.ModelSerializer):
+    full_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = [
+            "id",
+            "email",
+            "first_name",
+            "last_name",
+            "full_name",
+            "role",
+            "is_active",
+        ]
+
+    def get_full_name(self, obj):
+        return f"{obj.first_name or ''} {obj.last_name or ''}".strip()    
+    
+    
+    
+class ChatMessageSerializer(serializers.ModelSerializer):
+    sender = UserSerializer(read_only=True)
+    receiver = UserSerializer(read_only=True)
+
+    class Meta:
+        model = ChatMessage
+        fields = ['id', 'sender', 'receiver', 'message', 'is_read', 'timestamp']
+
+
+class ChatThreadSerializer(serializers.ModelSerializer):
+    user1 = UserSerializer(read_only=True)
+    user2 = UserSerializer(read_only=True)
+    messages = ChatMessageSerializer(many=True, source='chatmessage_set', read_only=True)
+
+    class Meta:
+        model = ChatThread
+        fields = ['id', 'user1', 'user2', 'updated_at', 'messages']
+    

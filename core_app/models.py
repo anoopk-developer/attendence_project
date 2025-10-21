@@ -357,7 +357,7 @@ class EmployeeDetail(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     face_encoding = models.JSONField(blank=True, null=True)
     emp_status = models.CharField(max_length=100, blank=True, null=True)
-    emp_exit_date = models.DateField(blank=True, null=True)
+    emp_exit_date = models.DateField(blank=True, null=True)  
 
     def __str__(self):
         return f"{self.employee_id} - {self.first_name} {self.last_name}"
@@ -431,12 +431,18 @@ class Attendance(models.Model):
     location = models.CharField(max_length=255, blank=True, null=True)
     qr_scan = models.BooleanField(default=False)
     qrsession = models.ForeignKey("QR_Session", on_delete=models.SET_NULL, null=True, blank=True)  # ✅ fixed
-    selfie = models.ImageField(upload_to="attendance_selfies/", blank=True, null=True)
+    in_selfie = models.ImageField(upload_to="attendance_selfies/in", blank=True, null=True)
+    out_selfie = models.ImageField(upload_to="attendance_selfies/out/", blank=True, null=True) # ✅ punch-out selfie
     status = models.CharField(max_length=20)  # Present / Absent
     verified_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="verified_attendance")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     punch_in = models.BooleanField(default=False)
+    # half_time = models.CharField(null=True , blank=True)
+
+
+    def __str__(self):
+        return f"{self.employee.employee_id} - {self.date} ({self.status})"
 
 # ---------------------------
 # Leave
@@ -599,7 +605,64 @@ class AboutUs(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return f"About Us (Last updated: {self.updated_at})"    
+        return f"About Us (Last updated: {self.updated_at})"  
+    
+    
+#---------------------------
+# department
+
+class Department(models.Model):
+    name = models.CharField(max_length=100)
+    description = models.TextField(null=True,blank=True)
+    department_head = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="headed_departments")
+
+    def __str__(self):
+        return self.name
+
+#---------------------------    
+# designation
+class Designation(models.Model):
+    title = models.CharField(max_length=100)
+    department = models.ForeignKey(Department, on_delete=models.CASCADE, related_name="designations")
+    description = models.TextField(null=True,blank=True)
+
+    def __str__(self):
+        return self.title   
+    
+    
+    
+class ChatThread(models.Model):
+    user1 = models.ForeignKey(User, on_delete=models.CASCADE, related_name="chat_threads_as_user1")
+    user2 = models.ForeignKey(User, on_delete=models.CASCADE, related_name="chat_threads_as_user2")
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('user1', 'user2')
+
+    def __str__(self):
+        return f"Chat: {self.user1.email} ↔ {self.user2.email}"
+
+    @staticmethod
+    def get_or_create_thread(user_a, user_b):
+        thread = ChatThread.objects.filter(
+            models.Q(user1=user_a, user2=user_b) | models.Q(user1=user_b, user2=user_a)
+        ).first()
+        if not thread:
+            thread = ChatThread.objects.create(user1=user_a, user2=user_b)
+        return thread
+
+
+class ChatMessage(models.Model):
+    sender = models.ForeignKey(User, on_delete=models.CASCADE, related_name="sent_messages")
+    receiver = models.ForeignKey(User, on_delete=models.CASCADE, related_name="received_messages")
+    message = models.TextField()
+    is_read = models.BooleanField(default=False)
+    timestamp = models.DateTimeField(default=timezone.now)
+
+    def __str__(self):
+        return f"{self.sender.email} → {self.receiver.email}: {self.message[:30]}"
+     
+      
     
     
     

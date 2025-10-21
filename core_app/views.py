@@ -812,7 +812,7 @@ import tempfile, os
 
 
 class FaceVerifyView(APIView):
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request):
         user_id = request.data.get("user_id")
@@ -939,8 +939,12 @@ class FaceVerifyView(APIView):
             "user": UserLoginSerializer(user).data,
         }, status=200)
         
+        
+        
+        
+# face log out api - punch out
 class FaceLogoutView(APIView):
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
     def post(self, request):
         user_id = request.data.get("user_id")
         image_file = request.FILES.get("image")
@@ -1031,7 +1035,6 @@ class FaceLogoutView(APIView):
                 "employee": EmployeeSerializer(employee).data
             }
         })
-
 
 
 
@@ -2349,4 +2352,59 @@ class RefreshTokenView(APIView):
             return Response(
                 {"success": False, "message": "Invalid or expired refresh token"},
                 status=status.HTTP_401_UNAUTHORIZED,
-            )        
+                
+                
+                
+            )  
+            
+from rest_framework import generics, permissions
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from django.db.models import Q
+from django.contrib.auth import get_user_model
+from .models import ChatMessage, ChatThread
+from .serializers import ChatMessageSerializer, ChatThreadSerializer
+
+class ChatThreadListView(generics.ListAPIView):
+    serializer_class = ChatThreadSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        return ChatThread.objects.filter(
+            Q(user1=user) | Q(user2=user)
+        ).order_by('-updated_at')
+
+
+
+
+class ChatMessageListView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, user_id):
+        other_user = User.objects.get(id=user_id)
+        thread = ChatThread.get_or_create_thread(request.user, other_user)
+        messages = ChatMessage.objects.filter(
+            Q(sender=request.user, receiver=other_user) |
+            Q(sender=other_user, receiver=request.user)
+        ).order_by('timestamp')
+        serializer = ChatMessageSerializer(messages, many=True)
+        return Response(serializer.data)
+    
+    
+    
+class SendMessageView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, user_id):
+        receiver = User.objects.get(id=user_id)
+        message_text = request.data.get('message', '').strip()
+        if not message_text:
+            return Response({"error": "Message cannot be empty."}, status=400)
+
+        ChatThread.get_or_create_thread(request.user, receiver)
+        msg = ChatMessage.objects.create(sender=request.user, receiver=receiver, message=message_text)
+        serializer = ChatMessageSerializer(msg)
+        return Response(serializer.data, status=201)
+    
+                  

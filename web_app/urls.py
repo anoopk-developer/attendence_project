@@ -86,6 +86,27 @@ path('terms-and-conditionsedit/<int:pk>/', TermsAndConditionsEditAPIView.as_view
 path('about-us-add-list/', AddListAboutUsAPIView.as_view(), name='about-us-add-list'),
 path('about-usedit/<int:pk>/', AboutUsEditAPIView.as_view(), name='about-us-edit'),
 path('leavediagram/<int:pk>/', LeavediagramAPIView.as_view(), name='leavediagram'),
+path('active-emp-count/',ActiveEmployeeCountView.as_view(),name='active-emp-count'),
+
+path('birthday-list-all/',BirthdayListAPIView.as_view(),name='birthday-list-all'),
+path('create-department/', DepartmentCreateView.as_view(), name='create-department'),
+path('list-departments/',DepartmentListView.as_view(),name='list-departments'),
+path('create-designation/', DesignationCreateView.as_view(), name='create-designation'),
+path('list-designations/',DesignationListView.as_view(),name='list-designations'),
+
+path('todays-all-employess-attendance/',AllTodaysEmployeeCheckinCheckOutDetails.as_view(),name='todays-all-employess-attendance'),
+
+
+ path('new-list-projects/', NewListProjectsApi.as_view(), name='new-list-projects'),
+ 
+ 
+ path("team-leaders-search/", TeamLeaderSearchListAPIView.as_view(), name="team-leader-search-query"),
+
+
+
+
+
+
 
 
 

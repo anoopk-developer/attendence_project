@@ -98,8 +98,7 @@ class AdminProfileSerializerView(serializers.ModelSerializer):
 class EmployeebirthdaySerializer(serializers.ModelSerializer):
     class Meta:
         model = EmployeeDetail
-        fields = '__all__'         
-        
+        fields = ['id', 'first_name', 'last_name','dob', 'user_type','designation','department','phone','profile_pic']
         
         
         
@@ -801,6 +800,35 @@ class LeavediagramSerializer(serializers.ModelSerializer):
         elif obj.is_ceo_approved:
             return "Approved"
         return "Pending"
+    
+    
+    
+    
+class TeamLeaderSearchSerializer(serializers.ModelSerializer):
+    full_name = serializers.SerializerMethodField()
+    company_branch_name = serializers.CharField(source="company_branch.branch_name", read_only=True)
+
+    class Meta:
+        model = EmployeeDetail
+        fields = [
+            "id",
+            "employee_id",
+            "first_name",
+            "last_name",
+            "full_name",
+            "user_type",
+            "company_branch_name",
+        ]
+
+    def get_full_name(self, obj):
+        return f"{obj.first_name} {obj.last_name}".strip()
+    
+    
+    
+    
+    
+    
+    
                  
             
     

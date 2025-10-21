@@ -69,7 +69,12 @@ urlpatterns = [
    path('list-all-leaves/',LeaveListAPIView.as_view(),name='list-all-leaves'),
     
     path("logout/", LogoutView.as_view(), name="logout"),
-    path('refresh-token/',RefreshTokenView.as_view(),name='refresh-token'),         
+    path('refresh-token/',RefreshTokenView.as_view(),name='refresh-token'),       
+    
+    
+     path('threads/', ChatThreadListView.as_view(), name='chat-threads'),
+    path('messages/<int:user_id>/', ChatMessageListView.as_view(), name='chat-messages'),
+    path('send/<int:user_id>/', SendMessageView.as_view(), name='send-message'),  
     
     
     
